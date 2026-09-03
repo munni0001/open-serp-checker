@@ -1,5 +1,5 @@
 from typing import Optional, List, Dict
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from datetime import datetime
 from enum import Enum
 
@@ -11,7 +11,6 @@ class ProxyProvider(str, Enum):
     MANUAL = "manual"
     DATAFORSEO = "dataforseo"
     SERPER = "serper"
-    # Add more providers as needed
 
 class ScraperStatus(str, Enum):
     PENDING = "pending"
@@ -23,8 +22,8 @@ class Project(BaseModel):
     id: Optional[int] = None
     name: str
     description: Optional[str] = ""
-    created_at: datetime = datetime.now()
-    updated_at: datetime = datetime.now()
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 class Proxy(BaseModel):
     id: Optional[int] = None
@@ -35,37 +34,27 @@ class Proxy(BaseModel):
     password: Optional[str] = ""
     host: Optional[str] = ""
     port: Optional[int] = 0
-    created_at: datetime = datetime.now()
-    updated_at: datetime = datetime.now()
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 class ScraperSettings(BaseModel):
     id: Optional[int] = None
     project_id: int
     name: str
-    domain: Optional[str] = ""  # Target domain to track rankings for
-    search_terms: List[str]  # List of search terms
-    geo: str  # e.g., "us", "uk"
+    domain: Optional[str] = ""
+    search_terms: List[str]
+    geo: str
     language: str = "en"
     results_per_page: int = 10
     max_pages: int = 1
-    max_position: int = 100  # Only track results up to this position
+    max_position: int = 100
     interval_hours: int = 24
-    created_at: datetime = datetime.now()
-    updated_at: datetime = datetime.now()
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 class ScrapingResult(BaseModel):
     id: Optional[int] = None
     scraper_id: int
     timestamp: datetime
-    rankings: Dict[str, Dict[str, object]]  # e.g., {"term": {"position": 1, "url": "http://example.com"}}
-    created_at: datetime = datetime.now()
-
-class Session(BaseModel):
-    id: Optional[int] = None
-    project_id: int
-    name: str
-    description: Optional[str] = ""
-    status: ScraperStatus = ScraperStatus.PENDING
-    settings: 'ScraperSettings'  # Use string annotation to avoid circular import
-    created_at: datetime = datetime.now()
-    updated_at: datetime = datetime.now()
+    rankings: Dict[str, Dict[str, object]]
+    created_at: datetime = Field(default_factory=datetime.utcnow)

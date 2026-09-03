@@ -1,7 +1,8 @@
+import json
 import sqlite3
 from typing import List, Optional
 from datetime import datetime
-from src.models import Project, Proxy, ScraperSettings, ScrapingResult, Session
+from src.models import Project, Proxy, ScraperSettings, ScrapingResult
 
 class Database:
     def __init__(self, db_path: str = "serp_scraper.db"):
@@ -78,22 +79,6 @@ class Database:
                 rankings TEXT NOT NULL,
                 created_at TEXT NOT NULL,
                 FOREIGN KEY (scraper_id) REFERENCES scraper_settings (id)
-            )
-        ''')
-        
-        # Create Sessions table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS sessions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                project_id INTEGER NOT NULL,
-                name TEXT NOT NULL,
-                description TEXT,
-                status TEXT DEFAULT 'pending',
-                settings_id INTEGER NOT NULL,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                FOREIGN KEY (project_id) REFERENCES projects (id),
-                FOREIGN KEY (settings_id) REFERENCES scraper_settings (id)
             )
         ''')
         
@@ -229,9 +214,8 @@ class Database:
         """Create new scraper settings."""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-        
-        # Convert list of search terms to comma-separated string for storage
-        search_terms_str = ','.join(settings.search_terms)
+
+        search_terms_str = json.dumps(settings.search_terms)
         
         cursor.execute('''
             INSERT INTO scraper_settings (project_id, name, search_terms, geo, language,
@@ -260,8 +244,7 @@ class Database:
         conn.close()
         
         if row:
-            # Convert comma-separated string back to list
-            search_terms = row[3].split(',') if row[3] else []
+            search_terms = json.loads(row[3]) if row[3] else []
             return ScraperSettings(
                 id=row[0],
                 project_id=row[1],
@@ -291,7 +274,7 @@ class Database:
 
         settings_list = []
         for row in rows:
-            search_terms = row[3].split(',') if row[3] else []
+            search_terms = json.loads(row[3]) if row[3] else []
             settings_list.append(ScraperSettings(
                 id=row[0],
                 project_id=row[1],
@@ -318,7 +301,7 @@ class Database:
             INSERT INTO scraping_results (scraper_id, timestamp, rankings, created_at)
             VALUES (?, ?, ?, ?)
         ''', (
-            result.scraper_id, result.timestamp.isoformat(), str(result.rankings), result.created_at.isoformat()
+            result.scraper_id, result.timestamp.isoformat(), json.dumps(result.rankings), result.created_at.isoformat()
         ))
         
         result_id = cursor.lastrowid
@@ -342,75 +325,20 @@ class Database:
                 id=row[0],
                 scraper_id=row[1],
                 timestamp=datetime.fromisoformat(row[2]),
-                rankings=eval(row[3]),  # This is not secure but works for our case
+                rankings=json.loads(row[3]),
                 created_at=datetime.fromisoformat(row[4])
             ))
         return results
-
-    def create_session(self, session: Session) -> int:
-        """Create a new session."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        # First, save the settings if they don't exist yet
-        if session.settings.id is None:
-            settings_id = self.create_scraper_settings(session.settings)
-            session.settings.id = settings_id
-        else:
-            # If settings already exist, update them
-            self.update_scraper_settings(session.settings)
-            
-        cursor.execute('''
-            INSERT INTO sessions (project_id, name, description, status, settings_id, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            session.project_id, session.name, session.description, session.status,
-            session.settings.id, session.created_at.isoformat(), session.updated_at.isoformat()
-        ))
-        
-        session_id = cursor.lastrowid
-        conn.commit()
-        conn.close()
-        return session_id
-    
-    def get_session(self, session_id: int) -> Optional[Session]:
-        """Retrieve a session by ID."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute('SELECT * FROM sessions WHERE id = ?', (session_id,))
-        row = cursor.fetchone()
-        
-        conn.close()
-        
-        if row:
-            # Get the associated settings
-            settings = self.get_scraper_settings(row[5])  # settings_id is at index 5
-            if settings is None:
-                return None
-                
-            return Session(
-                id=row[0],
-                project_id=row[1],
-                name=row[2],
-                description=row[3],
-                status=row[4],
-                settings=settings,
-                created_at=datetime.fromisoformat(row[6]),
-                updated_at=datetime.fromisoformat(row[7])
-            )
-        return None
 
     def update_scraper_settings(self, settings: ScraperSettings) -> bool:
         """Update existing scraper settings."""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
-        # Convert list of search terms to comma-separated string for storage
-        search_terms_str = ','.join(settings.search_terms)
-        
+        search_terms_str = json.dumps(settings.search_terms)
+
         cursor.execute('''
-            UPDATE scraper_settings SET 
+            UPDATE scraper_settings SET
                 project_id=?, name=?, search_terms=?, geo=?, language=?, 
                 results_per_page=?, max_pages=?, interval_hours=?, updated_at=?, domain=?, max_position=?
             WHERE id=?

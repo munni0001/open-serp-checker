@@ -1,35 +1,24 @@
-import asyncio
 from typing import List, Optional
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
+from src.config import settings
 from src.core.database import Database
 from src.core.managers import ProxyManager, ScraperManager
 from src.core.scraper import SerpScraper
 from src.models import Project, ScraperSettings
-import os
 
 app = FastAPI(title="SERP Scraper API", version="0.1.0")
 
-# Initialize database and managers
-db = Database()
+db = Database(db_path=settings.database_path)
 proxy_manager = ProxyManager(db)
 scraper_manager = ScraperManager(db)
 
-# Set up templates with explicit approach to avoid errors
-try:
-    templates = Jinja2Templates(directory="src/dashboard/templates")
-except Exception:
-    # Fallback if template directory is missing
-    templates = Jinja2Templates(directory=".")
-
-# Mount static files (only if directory exists)
-static_dir = "src/dashboard/static"
-if os.path.exists(static_dir):
-    app.mount("/static", StaticFiles(directory=static_dir), name="static")
+templates = Jinja2Templates(directory="src/dashboard/templates")
+app.mount("/static", StaticFiles(directory="src/dashboard/static"), name="static")
 
 
 # ---------- Request/Response schemas ----------
@@ -67,13 +56,7 @@ async def root(request: Request):
         "projects": db.get_all_projects(),
         "scrapers": db.get_all_scraper_settings(),
     }
-    try:
-        return templates.TemplateResponse(
-            request=request, name="index.html", context=context
-        )
-    except Exception:
-        # Fallback response if template loading fails
-        return {"message": "Dashboard loaded successfully (template not available)"}
+    return templates.TemplateResponse(request=request, name="index.html", context=context)
 
 
 @app.get("/health")
@@ -109,7 +92,7 @@ async def create_scraper(payload: ScraperCreate):
     if not db.get_project(payload.project_id):
         raise HTTPException(status_code=404, detail="Project not found")
 
-    settings = ScraperSettings(
+    scraper_settings = ScraperSettings(
         project_id=payload.project_id,
         name=payload.name,
         domain=payload.domain,
@@ -121,38 +104,37 @@ async def create_scraper(payload: ScraperCreate):
         max_position=payload.max_position,
         interval_hours=payload.interval_hours,
     )
-    settings_id = scraper_manager.add_scraper_settings(settings)
+    settings_id = scraper_manager.add_scraper_settings(scraper_settings)
     return {"id": settings_id, **payload.model_dump()}
 
 
 @app.post("/scrapers/{scraper_id}/run")
 async def run_scraper(scraper_id: int):
-    settings = scraper_manager.get_scraper_settings(scraper_id)
-    if not settings:
+    scraper_settings = scraper_manager.get_scraper_settings(scraper_id)
+    if not scraper_settings:
         raise HTTPException(status_code=404, detail="Scraper settings not found")
 
     scraper = SerpScraper(db)
-    result = await scraper.run_scraper_batch(settings)
+    result = await scraper.run_scraper_batch(scraper_settings)
     return {
         "scraper_id": scraper_id,
         "status": "completed",
         "result_id": result.id,
-        "message": f"Scraped {len(settings.search_terms)} keywords",
+        "message": f"Scraped {len(scraper_settings.search_terms)} keywords",
     }
 
 
 @app.post("/scrapers/{scraper_id}/run-scheduled")
-async def run_scraper_scheduled(scraper_id: int):
+async def run_scraper_scheduled(scraper_id: int, background: BackgroundTasks):
     """Run a scraper in the background so the request returns immediately."""
-    settings = scraper_manager.get_scraper_settings(scraper_id)
-    if not settings:
+    scraper_settings = scraper_manager.get_scraper_settings(scraper_id)
+    if not scraper_settings:
         raise HTTPException(status_code=404, detail="Scraper settings not found")
 
-    async def _bg():
-        scraper = SerpScraper(db)
-        await scraper.run_scraper_batch(settings)
+    async def _run():
+        await SerpScraper(db).run_scraper_batch(scraper_settings)
 
-    asyncio.get_event_loop().create_task(_bg())
+    background.add_task(_run)
     return {"scraper_id": scraper_id, "status": "started", "message": "Scheduled in background"}
 
 
@@ -166,4 +148,4 @@ async def get_results(scraper_id: int):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host=settings.host, port=settings.port)

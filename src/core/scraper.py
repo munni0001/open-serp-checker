@@ -128,7 +128,7 @@ class SerpScraper:
             matched = None
             for item in items:
                 host = urlparse(item["url"]).netloc.lower()
-                if parsed_domain and parsed_domain.lstrip("www.") in host.lstrip("www."):
+                if parsed_domain and parsed_domain.removeprefix("www.") in host.removeprefix("www."):
                     matched = item
                     break
 
