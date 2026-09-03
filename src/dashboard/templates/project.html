@@ -1,16 +1,426 @@
-<!DOCTYPE html>
-<html lang="en"><head><meta charset="UTF-8"><title>{{ project.name }}</title></head>
-<body>
-<p><a href="/">← Projects</a></p>
-<h1>{{ project.name }}</h1>
-<p>{{ project.domain }} · {{ project.default_geo|upper }} · {{ project.default_interval_hours }}h default</p>
-<h2>Keywords</h2>
-<ul>
-{% for row in keyword_rows %}
-  <li>{{ row.keyword.term }} — 7d: {{ row.position_7d_ago or '—' }} · 1d: {{ row.position_1d_ago or '—' }} · now: {{ row.latest_position or '—' }}</li>
-{% else %}
-  <li>No keywords yet.</li>
-{% endfor %}
-</ul>
-<p>Placeholder. UI lands in commit 2.</p>
-</body></html>
+{% extends "_base.html" %}
+{% block title %}{{ project.name }} · serp-scrape{% endblock %}
+
+{% block body %}
+<a class="breadcrumb" href="/"><i data-lucide="chevron-left"></i> Projects</a>
+
+<div class="page-head" style="margin-top: 4px;">
+    <div>
+        <h1 class="page-title" id="projName">{{ project.name }}</h1>
+        <p class="page-sub" style="margin:0;" id="projMeta">
+            {% if project.domain %}<span class="mono">{{ project.domain }}</span>{% endif %}
+            {% if project.description %} · {{ project.description }}{% endif %}
+            · {{ project.default_geo|upper }} · {{ project.default_interval_hours }}h default · top {{ project.default_max_position }}
+        </p>
+    </div>
+    <div style="display: flex; gap: 8px;">
+        <button class="btn btn-ghost btn-sm" id="editProjBtn"><i data-lucide="pencil"></i> Edit</button>
+        <button class="btn btn-danger btn-sm" id="delProjBtn"><i data-lucide="trash-2"></i> Delete</button>
+    </div>
+</div>
+
+<!-- Edit project panel -->
+<div class="card hidden" id="editProjCard">
+    <div class="card-head"><h2><i data-lucide="settings-2"></i> Edit project</h2></div>
+    <form id="editProjForm" class="card-body">
+        <div class="grid">
+            <div class="field">
+                <label for="eName">Name</label>
+                <input id="eName" value="{{ project.name }}" required>
+            </div>
+            <div class="field">
+                <label for="eDomain">Domain</label>
+                <input id="eDomain" value="{{ project.domain }}" required>
+            </div>
+            <div class="field" style="grid-column: 1 / -1;">
+                <label for="eDesc">Description</label>
+                <input id="eDesc" value="{{ project.description }}">
+            </div>
+        </div>
+        <div style="margin-top: 18px;">
+            <div style="font-size: 12px; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 10px;">Keyword defaults (applies to new keywords only)</div>
+            <div class="grid-4">
+                <div class="field"><label>Geo</label><input id="eGeo" value="{{ project.default_geo }}"></div>
+                <div class="field"><label>Interval (h)</label><input id="eInterval" type="number" min="1" value="{{ project.default_interval_hours }}"></div>
+                <div class="field"><label>Max position</label><input id="eMaxPos" type="number" min="1" value="{{ project.default_max_position }}"></div>
+                <div class="field"><label>Results/page</label><input id="eRpp" type="number" min="10" step="10" value="{{ project.default_results_per_page }}"></div>
+            </div>
+        </div>
+        <div style="display: flex; gap: 8px; margin-top: 18px;">
+            <button class="btn btn-primary" type="submit"><i data-lucide="check"></i> Save</button>
+            <button class="btn btn-ghost" type="button" id="cancelEditProj">Cancel</button>
+        </div>
+    </form>
+</div>
+
+<div class="card">
+    <div class="card-head">
+        <h2><i data-lucide="list"></i> Keywords <span class="badge-count" id="kwCount">{{ keyword_rows|length }}</span></h2>
+        <button class="btn btn-ghost btn-sm" id="toggleAddKw" type="button"><i data-lucide="plus"></i> Add keywords</button>
+    </div>
+
+    <div class="collapse hidden" id="addKwPanel">
+        <form id="addKwForm">
+            <div class="field">
+                <label for="kwTerms">Keywords</label>
+                <textarea id="kwTerms" placeholder="One per line, or comma-separated&#10;best ai companion&#10;best ai girlfriend" required></textarea>
+                <div class="hint">Each keyword is created with the project defaults below. Blank = use project defaults.</div>
+            </div>
+            <div class="grid-4" style="margin-top: 14px;">
+                <div class="field"><label>Geo</label><input id="kwGeo" placeholder="{{ project.default_geo }}"></div>
+                <div class="field"><label>Interval (h)</label><input id="kwInterval" type="number" min="1" placeholder="{{ project.default_interval_hours }}"></div>
+                <div class="field"><label>Max position</label><input id="kwMaxPos" type="number" min="1" placeholder="{{ project.default_max_position }}"></div>
+                <div class="field"><label>Results/page</label><input id="kwRpp" type="number" min="10" step="10" placeholder="{{ project.default_results_per_page }}"></div>
+            </div>
+            <div style="display: flex; gap: 8px; margin-top: 18px;">
+                <button class="btn btn-primary" type="submit"><i data-lucide="check"></i> Add</button>
+                <button class="btn btn-ghost" type="button" id="cancelAddKw">Cancel</button>
+            </div>
+        </form>
+    </div>
+
+    <table id="kwTable">
+        <thead>
+            <tr>
+                <th>Keyword</th>
+                <th style="width: 220px;">Config</th>
+                <th style="width: 220px;">Position (7d · 1d · now)</th>
+                <th style="width: 140px; text-align: right;">Actions</th>
+            </tr>
+        </thead>
+        <tbody id="kwBody">
+            {% if keyword_rows %}
+                {% for row in keyword_rows %}
+                    {% set kw = row.keyword %}
+                    <tr class="kw-row clickable" data-id="{{ kw.id }}"
+                        data-term="{{ kw.term }}" data-geo="{{ kw.geo }}"
+                        data-engine="{{ kw.engine }}" data-interval="{{ kw.interval_hours }}"
+                        data-maxpos="{{ kw.max_position }}" data-rpp="{{ kw.results_per_page }}">
+                        <td class="cell-term">{{ kw.term }}</td>
+                        <td class="cell-config">{{ kw.geo|upper }} · {{ kw.engine }} · {{ kw.interval_hours }}h · top {{ kw.max_position }}</td>
+                        <td class="cell-positions"
+                            data-p7="{{ row.position_7d_ago if row.position_7d_ago is not none else '' }}"
+                            data-p1="{{ row.position_1d_ago if row.position_1d_ago is not none else '' }}"
+                            data-pnow="{{ row.latest_position if row.latest_position is not none else '' }}">
+                            <!-- rendered by JS -->
+                        </td>
+                        <td style="text-align: right;">
+                            <span class="row-actions">
+                                <button class="icon-btn act-run" title="Run now"><i data-lucide="play"></i></button>
+                                <button class="icon-btn act-edit" title="Edit"><i data-lucide="settings-2"></i></button>
+                                <button class="icon-btn act-del" title="Delete"><i data-lucide="trash-2"></i></button>
+                            </span>
+                        </td>
+                    </tr>
+                {% endfor %}
+            {% else %}
+                <tr id="emptyRow"><td colspan="4" style="padding: 0;">
+                    <div class="empty-state">
+                        <i data-lucide="search"></i>
+                        <div class="title">No keywords yet</div>
+                        <div class="sub">Click "Add keywords" to start tracking.</div>
+                    </div>
+                </td></tr>
+            {% endif %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    const PROJECT_ID = {{ project.id }};
+    const PROJECT_DEFAULTS = {
+        default_geo: "{{ project.default_geo }}",
+        default_interval_hours: {{ project.default_interval_hours }},
+        default_max_position: {{ project.default_max_position }},
+        default_results_per_page: {{ project.default_results_per_page }},
+    };
+
+    // ---------- Positions rendering ----------
+    function renderPositions(cell) {
+        const p7 = cell.dataset.p7 === '' ? null : parseInt(cell.dataset.p7, 10);
+        const p1 = cell.dataset.p1 === '' ? null : parseInt(cell.dataset.p1, 10);
+        const now = cell.dataset.pnow === '' ? null : parseInt(cell.dataset.pnow, 10);
+        cell.innerHTML = `
+            <span class="cell-pos">
+                ${posPill(p7)}<span class="sep">·</span>${posPill(p1)}<span class="sep">·</span>${posPill(now)}
+                ${trend(now, p7)}
+            </span>`;
+        lucide.createIcons();
+    }
+    document.querySelectorAll('.cell-positions').forEach(renderPositions);
+
+    // ---------- Edit project ----------
+    const editProjCard = document.getElementById('editProjCard');
+    document.getElementById('editProjBtn').addEventListener('click', () => editProjCard.classList.toggle('hidden'));
+    document.getElementById('cancelEditProj').addEventListener('click', () => editProjCard.classList.add('hidden'));
+
+    document.getElementById('editProjForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const body = {
+            name: document.getElementById('eName').value.trim(),
+            domain: document.getElementById('eDomain').value.trim(),
+            description: document.getElementById('eDesc').value.trim(),
+            default_geo: document.getElementById('eGeo').value.trim() || 'us',
+            default_interval_hours: parseInt(document.getElementById('eInterval').value, 10),
+            default_max_position: parseInt(document.getElementById('eMaxPos').value, 10),
+            default_results_per_page: parseInt(document.getElementById('eRpp').value, 10),
+        };
+        try {
+            const p = await api(`/projects/${PROJECT_ID}`, { method: 'PATCH', body });
+            document.getElementById('projName').textContent = p.name;
+            document.getElementById('projMeta').innerHTML =
+                `${p.domain ? `<span class="mono">${p.domain}</span>` : ''}${p.description ? ` · ${p.description}` : ''} · ${p.default_geo.toUpperCase()} · ${p.default_interval_hours}h default · top ${p.default_max_position}`;
+            editProjCard.classList.add('hidden');
+            toast('Project updated');
+        } catch (err) { toast(err.message, 'error'); }
+    });
+
+    document.getElementById('delProjBtn').addEventListener('click', async () => {
+        if (!confirm('Delete this project? All keywords and their history will be removed. This cannot be undone.')) return;
+        try {
+            await api(`/projects/${PROJECT_ID}`, { method: 'DELETE' });
+            window.location.href = '/';
+        } catch (err) { toast(err.message, 'error'); }
+    });
+
+    // ---------- Add keywords (bulk) ----------
+    const addKwPanel = document.getElementById('addKwPanel');
+    document.getElementById('toggleAddKw').addEventListener('click', () => {
+        addKwPanel.classList.toggle('hidden');
+        if (!addKwPanel.classList.contains('hidden')) document.getElementById('kwTerms').focus();
+    });
+    document.getElementById('cancelAddKw').addEventListener('click', () => addKwPanel.classList.add('hidden'));
+
+    document.getElementById('addKwForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const raw = document.getElementById('kwTerms').value;
+        const terms = raw.split(/[\n,]/).map(s => s.trim()).filter(Boolean);
+        if (!terms.length) { toast('Enter at least one keyword', 'error'); return; }
+
+        const body = { terms };
+        const geo = document.getElementById('kwGeo').value.trim();
+        const iv = document.getElementById('kwInterval').value;
+        const mp = document.getElementById('kwMaxPos').value;
+        const rpp = document.getElementById('kwRpp').value;
+        if (geo) body.geo = geo;
+        if (iv) body.interval_hours = parseInt(iv, 10);
+        if (mp) body.max_position = parseInt(mp, 10);
+        if (rpp) body.results_per_page = parseInt(rpp, 10);
+
+        try {
+            const res = await api(`/projects/${PROJECT_ID}/keywords/bulk`, { method: 'POST', body });
+            toast(`Added ${res.count} keyword${res.count === 1 ? '' : 's'}`);
+            window.location.reload();
+        } catch (err) { toast(err.message, 'error'); }
+    });
+
+    // ---------- Row expand + chart ----------
+    const charts = new Map(); // keyword_id → Chart instance
+
+    async function toggleExpand(row) {
+        const kwId = row.dataset.id;
+        const next = row.nextElementSibling;
+        if (next && next.classList.contains('expand-row') && next.dataset.for === kwId) {
+            // collapse
+            const chart = charts.get(kwId);
+            if (chart) { chart.destroy(); charts.delete(kwId); }
+            next.remove();
+            return;
+        }
+        // collapse any other expanded rows in this table
+        document.querySelectorAll('.expand-row').forEach(r => {
+            const id = r.dataset.for;
+            const c = charts.get(id);
+            if (c) { c.destroy(); charts.delete(id); }
+            r.remove();
+        });
+
+        const tr = document.createElement('tr');
+        tr.className = 'expand-row';
+        tr.dataset.for = kwId;
+        tr.innerHTML = `
+            <td colspan="4">
+                <div class="expand-meta" id="meta-${kwId}">Loading history…</div>
+                <div class="chart-wrap"><div class="chart-container"><canvas id="chart-${kwId}"></canvas></div></div>
+            </td>`;
+        row.after(tr);
+
+        try {
+            const h = await api(`/keywords/${kwId}/history`);
+            const meta = document.getElementById(`meta-${kwId}`);
+            const points = h.timestamps.length;
+            meta.textContent = points
+                ? `${points} data point${points === 1 ? '' : 's'} · latest ${new Date(h.timestamps[h.timestamps.length - 1]).toLocaleString()}`
+                : 'No history yet — run this keyword to collect the first data point.';
+
+            if (!points) return;
+
+            const ctx = document.getElementById(`chart-${kwId}`).getContext('2d');
+            const textDim = getComputedStyle(document.documentElement).getPropertyValue('--text-dim').trim();
+            const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
+            const border = getComputedStyle(document.documentElement).getPropertyValue('--border').trim();
+            const chart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: h.timestamps.map(t => new Date(t).toLocaleDateString()),
+                    datasets: [{
+                        data: h.positions,
+                        borderColor: accent,
+                        backgroundColor: accent + '22',
+                        tension: 0.25,
+                        pointRadius: 3,
+                        pointBackgroundColor: accent,
+                        fill: true,
+                        spanGaps: true,
+                    }],
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        y: {
+                            reverse: true, // lower rank = higher up
+                            beginAtZero: false,
+                            ticks: { color: textDim, font: { size: 11 } },
+                            grid: { color: border },
+                        },
+                        x: {
+                            ticks: { color: textDim, font: { size: 11 }, maxRotation: 0, autoSkip: true, maxTicksLimit: 6 },
+                            grid: { display: false },
+                        },
+                    },
+                },
+            });
+            charts.set(kwId, chart);
+        } catch (err) {
+            const meta = document.getElementById(`meta-${kwId}`);
+            if (meta) meta.textContent = `Error: ${err.message}`;
+        }
+    }
+
+    // ---------- Row actions ----------
+    async function runKeyword(row) {
+        const kwId = row.dataset.id;
+        const btn = row.querySelector('.act-run');
+        btn.disabled = true;
+        toast('Running…');
+        try {
+            const res = await api(`/keywords/${kwId}/run`, { method: 'POST' });
+            // shift positions: p1 becomes p7 window later; here we just refresh "now"
+            const cell = row.querySelector('.cell-positions');
+            cell.dataset.pnow = res.position ?? '';
+            renderPositions(cell);
+            toast(res.found ? `Found at #${res.position}` : 'Not in results');
+            // if row is expanded, refresh chart
+            const next = row.nextElementSibling;
+            if (next && next.classList.contains('expand-row') && next.dataset.for === kwId) {
+                await toggleExpand(row); // collapse
+                await toggleExpand(row); // re-open with fresh data
+            }
+        } catch (err) {
+            toast(err.message, 'error');
+        } finally {
+            btn.disabled = false;
+        }
+    }
+
+    async function deleteKeyword(row) {
+        if (!confirm(`Delete "${row.dataset.term}" and its history?`)) return;
+        try {
+            await api(`/keywords/${row.dataset.id}`, { method: 'DELETE' });
+            const next = row.nextElementSibling;
+            if (next && next.classList.contains('expand-row')) next.remove();
+            row.remove();
+            const badge = document.getElementById('kwCount');
+            badge.textContent = document.querySelectorAll('.kw-row').length;
+            toast('Deleted');
+        } catch (err) { toast(err.message, 'error'); }
+    }
+
+    function editKeyword(row) {
+        if (row.classList.contains('editing')) return;
+        row.classList.add('editing');
+        row.classList.remove('clickable');
+
+        const cellTerm = row.querySelector('.cell-term');
+        const cellCfg = row.querySelector('.cell-config');
+        const actions = row.querySelector('.row-actions');
+
+        cellTerm.innerHTML = `<input class="inline" id="edit-term-${row.dataset.id}" value="${row.dataset.term.replace(/"/g, '&quot;')}">`;
+        cellCfg.innerHTML = `
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px;">
+                <input class="inline" id="edit-geo-${row.dataset.id}" value="${row.dataset.geo}" placeholder="geo">
+                <input class="inline" id="edit-int-${row.dataset.id}" type="number" min="1" value="${row.dataset.interval}" placeholder="hours">
+                <input class="inline" id="edit-mp-${row.dataset.id}" type="number" min="1" value="${row.dataset.maxpos}" placeholder="max pos">
+                <input class="inline" id="edit-rpp-${row.dataset.id}" type="number" min="10" step="10" value="${row.dataset.rpp}" placeholder="rpp">
+            </div>`;
+        actions.innerHTML = `
+            <button class="icon-btn act-save" title="Save"><i data-lucide="check"></i></button>
+            <button class="icon-btn act-cancel" title="Cancel"><i data-lucide="x"></i></button>`;
+        lucide.createIcons();
+    }
+
+    async function saveEdit(row) {
+        const id = row.dataset.id;
+        const body = {
+            term: document.getElementById(`edit-term-${id}`).value.trim(),
+            geo: document.getElementById(`edit-geo-${id}`).value.trim(),
+            interval_hours: parseInt(document.getElementById(`edit-int-${id}`).value, 10),
+            max_position: parseInt(document.getElementById(`edit-mp-${id}`).value, 10),
+            results_per_page: parseInt(document.getElementById(`edit-rpp-${id}`).value, 10),
+        };
+        try {
+            const kw = await api(`/keywords/${id}`, { method: 'PATCH', body });
+            row.dataset.term = kw.term;
+            row.dataset.geo = kw.geo;
+            row.dataset.interval = kw.interval_hours;
+            row.dataset.maxpos = kw.max_position;
+            row.dataset.rpp = kw.results_per_page;
+            row.querySelector('.cell-term').textContent = kw.term;
+            row.querySelector('.cell-config').textContent =
+                `${kw.geo.toUpperCase()} · ${kw.engine} · ${kw.interval_hours}h · top ${kw.max_position}`;
+            restoreActions(row);
+            row.classList.remove('editing');
+            row.classList.add('clickable');
+            toast('Saved');
+        } catch (err) { toast(err.message, 'error'); }
+    }
+
+    function cancelEdit(row) {
+        row.querySelector('.cell-term').textContent = row.dataset.term;
+        row.querySelector('.cell-config').textContent =
+            `${row.dataset.geo.toUpperCase()} · ${row.dataset.engine} · ${row.dataset.interval}h · top ${row.dataset.maxpos}`;
+        restoreActions(row);
+        row.classList.remove('editing');
+        row.classList.add('clickable');
+    }
+
+    function restoreActions(row) {
+        row.querySelector('.row-actions').innerHTML = `
+            <button class="icon-btn act-run" title="Run now"><i data-lucide="play"></i></button>
+            <button class="icon-btn act-edit" title="Edit"><i data-lucide="settings-2"></i></button>
+            <button class="icon-btn act-del" title="Delete"><i data-lucide="trash-2"></i></button>`;
+        lucide.createIcons();
+    }
+
+    // ---------- Delegated click handling ----------
+    document.getElementById('kwBody').addEventListener('click', (e) => {
+        const row = e.target.closest('.kw-row');
+        if (!row) return;
+        const actionEl = e.target.closest('button');
+        if (actionEl) {
+            if (actionEl.classList.contains('act-run')) return runKeyword(row);
+            if (actionEl.classList.contains('act-edit')) return editKeyword(row);
+            if (actionEl.classList.contains('act-del')) return deleteKeyword(row);
+            if (actionEl.classList.contains('act-save')) return saveEdit(row);
+            if (actionEl.classList.contains('act-cancel')) return cancelEdit(row);
+            return;
+        }
+        if (row.classList.contains('editing')) return;
+        toggleExpand(row);
+    });
+</script>
+{% endblock %}

@@ -1,13 +1,116 @@
-<!DOCTYPE html>
-<html lang="en"><head><meta charset="UTF-8"><title>serp-scrape · projects</title></head>
-<body>
-<h1>Projects</h1>
-<ul>
-{% for p in projects %}
-  <li><a href="/project/{{ p.id }}">{{ p.name }}</a> — {{ p.domain }} — {{ keyword_counts.get(p.id, 0) }} keywords</li>
-{% else %}
-  <li>No projects yet.</li>
-{% endfor %}
-</ul>
-<p>Placeholder. UI lands in commit 2.</p>
-</body></html>
+{% extends "_base.html" %}
+{% block title %}Projects · serp-scrape{% endblock %}
+
+{% block body %}
+<div class="page-head">
+    <div>
+        <h1 class="page-title">Projects</h1>
+        <p class="page-sub" style="margin:0;">Each project tracks a website across a set of keywords.</p>
+    </div>
+    <button class="btn btn-primary" id="toggleAdd" type="button">
+        <i data-lucide="plus"></i> Add Project
+    </button>
+</div>
+
+<div class="card">
+    <div class="collapse hidden" id="addPanel">
+        <form id="addForm">
+            <div class="grid">
+                <div class="field">
+                    <label for="fName">Name</label>
+                    <input id="fName" required placeholder="e.g. Acme SEO">
+                </div>
+                <div class="field">
+                    <label for="fDomain">Domain</label>
+                    <input id="fDomain" required placeholder="example.com">
+                </div>
+                <div class="field" style="grid-column: 1 / -1;">
+                    <label for="fDesc">Description</label>
+                    <input id="fDesc" placeholder="Optional">
+                </div>
+            </div>
+            <div style="margin-top: 18px;">
+                <div style="font-size: 12px; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 10px;">Keyword defaults</div>
+                <div class="grid-4">
+                    <div class="field">
+                        <label for="fGeo">Geo</label>
+                        <input id="fGeo" value="us" maxlength="4">
+                    </div>
+                    <div class="field">
+                        <label for="fInterval">Interval (h)</label>
+                        <input id="fInterval" type="number" min="1" value="24">
+                    </div>
+                    <div class="field">
+                        <label for="fMaxPos">Max position</label>
+                        <input id="fMaxPos" type="number" min="1" value="100">
+                    </div>
+                    <div class="field">
+                        <label for="fRpp">Results/page</label>
+                        <input id="fRpp" type="number" min="10" step="10" value="10">
+                    </div>
+                </div>
+            </div>
+            <div style="display: flex; gap: 8px; margin-top: 18px;">
+                <button class="btn btn-primary" type="submit"><i data-lucide="check"></i> Create</button>
+                <button class="btn btn-ghost" type="button" id="cancelAdd">Cancel</button>
+            </div>
+        </form>
+    </div>
+
+    <div class="project-list" id="projectList">
+        {% if projects %}
+            {% for p in projects %}
+            <a class="project-row" href="/project/{{ p.id }}">
+                <span class="id">#{{ p.id }}</span>
+                <div>
+                    <span class="name">{{ p.name }}</span>
+                    <span class="desc">
+                        {% if p.domain %}{{ p.domain }}{% if p.description %} · {% endif %}{% endif %}{{ p.description or '' }}
+                        {% if not p.domain and not p.description %}—{% endif %}
+                    </span>
+                </div>
+                <span class="count">{{ keyword_counts.get(p.id, 0) }} keywords</span>
+                <span class="arrow"><i data-lucide="arrow-right"></i></span>
+            </a>
+            {% endfor %}
+        {% else %}
+            <div class="empty-state">
+                <i data-lucide="folder-plus"></i>
+                <div class="title">No projects yet</div>
+                <div class="sub">Click "Add Project" to create one.</div>
+            </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    const panel = document.getElementById('addPanel');
+    document.getElementById('toggleAdd').addEventListener('click', () => {
+        panel.classList.toggle('hidden');
+        if (!panel.classList.contains('hidden')) document.getElementById('fName').focus();
+    });
+    document.getElementById('cancelAdd').addEventListener('click', () => panel.classList.add('hidden'));
+
+    document.getElementById('addForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const body = {
+            name: document.getElementById('fName').value.trim(),
+            domain: document.getElementById('fDomain').value.trim(),
+            description: document.getElementById('fDesc').value.trim(),
+            default_geo: document.getElementById('fGeo').value.trim() || 'us',
+            default_interval_hours: parseInt(document.getElementById('fInterval').value, 10) || 24,
+            default_max_position: parseInt(document.getElementById('fMaxPos').value, 10) || 100,
+            default_results_per_page: parseInt(document.getElementById('fRpp').value, 10) || 10,
+        };
+        try {
+            const p = await api('/projects', { method: 'POST', body });
+            toast(`Created "${p.name}"`);
+            window.location.href = `/project/${p.id}`;
+        } catch (err) {
+            toast(err.message, 'error');
+        }
+    });
+</script>
+{% endblock %}
