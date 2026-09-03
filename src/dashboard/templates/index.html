@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SERP Scraper Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --primary: #2563eb;
+            --primary-dark: #1d4ed8;
+            --danger: #dc2626;
+            --danger-dark: #b91c1c;
+            --border: #e5e7eb;
+            --bg: #f3f4f6;
+            --text: #1f2937;
+        }
+        * { box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+            margin: 0;
+            background-color: var(--bg);
+            color: var(--text);
+        }
+        .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+        h1 { margin-top: 0; }
+        .card {
+            background-color: white;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+        }
+        .card h2 { margin-top: 0; font-size: 18px; border-bottom: 1px solid var(--border); padding-bottom: 10px; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+        .field { display: flex; flex-direction: column; margin-bottom: 14px; }
+        .field label { font-weight: 600; font-size: 13px; margin-bottom: 4px; }
+        .field input, .field select, .field textarea {
+            padding: 8px 10px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            font-size: 14px;
+        }
+        .field textarea { resize: vertical; min-height: 70px; }
+        .field .hint { font-size: 12px; color: #6b7280; margin-top: 3px; }
+        .form-actions { display: flex; gap: 10px; margin-top: 10px; }
+        .btn {
+            padding: 9px 16px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+        }
+        .btn-primary { background-color: var(--primary); color: white; }
+        .btn-primary:hover { background-color: var(--primary-dark); }
+        .btn-danger { background-color: var(--danger); color: white; }
+        .btn-danger:hover { background-color: var(--danger-dark); }
+        .btn-secondary { background-color: #e5e7eb; color: var(--text); }
+        .btn-secondary:hover { background-color: #d1d5db; }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--border); font-size: 14px; }
+        th { background-color: #f9fafb; font-size: 13px; text-transform: uppercase; letter-spacing: 0.03em; }
+        .badge { padding: 3px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+        .badge-found { background-color: #dcfce7; color: #166534; }
+        .badge-missed { background-color: #fee2e2; color: #991b1b; }
+        .chart-container { position: relative; height: 280px; margin-top: 10px; }
+        .scheduling { display: flex; gap: 16px; align-items: center; }
+        .scheduling .field { flex: 1; margin-bottom: 0; }
+        .switch { position: relative; display: inline-block; width: 44px; height: 24px; margin-left: 8px; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider {
+            position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0;
+            background-color: #ccc; transition: 0.2s; border-radius: 24px;
+        }
+        .slider:before {
+            position: absolute; content: ""; height: 18px; width: 18px; left: 3px; bottom: 3px;
+            background-color: white; transition: 0.2s; border-radius: 50%;
+        }
+        .switch input:checked + .slider { background-color: var(--primary); }
+        .switch input:checked + .slider:before { transform: translateX(20px); }
+        .empty { color: #6b7280; text-align: center; padding: 20px; }
+        .notice { font-size: 13px; color: #6b7280; }
+        .inline-form { display: flex; gap: 8px; align-items: center; }
+        .inline-form input { flex: 1; }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>SERP Scraper Dashboard</h1>
+
+        <!-- Settings form -->
+        <div class="card">
+            <h2>Scraper Settings</h2>
+            <form id="settingsForm">
+                <div class="grid">
+                    <div class="field">
+                        <label for="projectSelect">Project</label>
+                        <select id="projectSelect" name="project_id">
+                            {% if projects %}
+                                {% for p in projects %}
+                                    <option value="{{ p.id }}">{{ p.name }}</option>
+                                {% endfor %}
+                            {% endif %}
+                            <option value="new">+ Create new project...</option>
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label for="projectName">New project name</label>
+                        <input id="projectName" type="text" placeholder="e.g. Acme SEO" class="hidden">
+                        <div class="hint">Shown only when "Create new project" is selected.</div>
+                    </div>
+                    <div class="field">
+                        <label for="scraperName">Scraper name</label>
+                        <input id="scraperName" type="text" required placeholder="e.g. Acme - Brand Keywords">
+                    </div>
+                    <div class="field">
+                        <label for="domain">Domain</label>
+                        <input id="domain" type="text" placeholder="acme.com">
+                        <div class="hint">Rankings are matched against this domain.</div>
+                    </div>
+                    <div class="field">
+                        <label for="keywords">Keywords (comma separated)</label>
+                        <textarea id="keywords" placeholder="seo tools, serp scraper, keyword research"></textarea>
+                    </div>
+                    <div class="field">
+                        <label for="geo">Geo</label>
+                        <select id="geo" name="geo">
+                            <option value="us" selected>United States</option>
+                            <option value="uk">United Kingdom</option>
+                            <option value="ca">Canada</option>
+                            <option value="au">Australia</option>
+                            <option value="de">Germany</option>
+                            <option value="fr">France</option>
+                            <option value="in">India</option>
+                            <option value="es">Spain</option>
+                            <option value="it">Italy</option>
+                            <option value="nl">Netherlands</option>
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label for="maxPosition">Max position</label>
+                        <input id="maxPosition" type="number" min="1" max="100" value="100">
+                    </div>
+                    <div class="field">
+                        <label for="resultsPerPage">Results per page</label>
+                        <input id="resultsPerPage" type="number" min="1" max="50" value="10">
+                    </div>
+                </div>
+
+                <h3 style="margin: 20px 0 10px;">Scheduling</h3>
+                <div class="scheduling">
+                    <div class="field">
+                        <label for="intervalHours">Interval (hours)</label>
+                        <input id="intervalHours" type="number" min="1" max="8760" value="24">
+                    </div>
+                    <div class="field">
+                        <label>Enable scheduling
+                            <span class="switch">
+                                <input type="checkbox" id="scheduleEnabled">
+                                <span class="slider"></span>
+                            </span>
+                        </label>
+                        <div class="hint">When enabled, the scraper runs automatically every interval.</div>
+                    </div>
+                </div>
+
+                <div class="form-actions">
+                    <button type="submit" class="btn btn-primary" id="saveBtn">Save Settings</button>
+                    <button type="button" class="btn btn-secondary" id="cancelBtn">Cancel</button>
+                </div>
+                <p id="formMessage" class="notice"></p>
+            </form>
+        </div>
+
+        <!-- Existing scrapers -->
+        <div class="card">
+            <h2>Scrapers</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Name</th>
+                        <th>Domain</th>
+                        <th>Keywords</th>
+                        <th>Geo</th>
+                        <th>Interval</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="scrapersBody">
+                    {% if scrapers %}
+                        {% for s in scrapers %}
+                        <tr>
+                            <td>{{ s.id }}</td>
+                            <td>{{ s.name }}</td>
+                            <td>{{ s.domain }}</td>
+                            <td>{{ s.search_terms|join(', ') }}</td>
+                            <td>{{ s.geo }}</td>
+                            <td>{{ s.interval_hours }}h</td>
+                            <td>
+                                <button class="btn btn-primary" onclick="runScraper({{ s.id }})">Run</button>
+                                <button class="btn btn-secondary" onclick="loadResults({{ s.id }})">Results</button>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    {% else %}
+                        <tr><td colspan="7" class="empty">No scrapers yet. Create one above.</td></tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Rankings chart -->
+        <div class="card">
+            <h2>Rankings Chart</h2>
+            <div class="chart-container">
+                <canvas id="rankingsChart"></canvas>
+            </div>
+        </div>
+
+        <!-- Results -->
+        <div class="card">
+            <h2>Results <span id="resultsScraperId" class="notice"></span></h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Keyword</th>
+                        <th>Position</th>
+                        <th>Status</th>
+                        <th>URL</th>
+                        <th>Date</th>
+                    </tr>
+                </thead>
+                <tbody id="resultsTableBody">
+                    <tr><td colspan="5" class="empty">No results loaded. Click "Results" on a scraper.</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        let rankingsChart = null;
+
+        // Toggle new-project name field visibility
+        document.getElementById('projectSelect').addEventListener('change', (e) => {
+            const nameInput = document.getElementById('projectName');
+            nameInput.classList.toggle('hidden', e.target.value !== 'new');
+            if (e.target.value === 'new') nameInput.classList.remove('hidden');
+        });
+
+        // Cancel resets the form
+        document.getElementById('cancelBtn').addEventListener('click', () => {
+            document.getElementById('settingsForm').reset();
+            document.getElementById('formMessage').textContent = '';
+            document.getElementById('projectName').classList.add('hidden');
+        });
+
+        // Save settings
+        document.getElementById('settingsForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const btn = document.getElementById('saveBtn');
+            btn.disabled = true;
+            const msg = document.getElementById('formMessage');
+            msg.textContent = 'Saving...';
+            try {
+                let projectId = document.getElementById('projectSelect').value;
+                if (projectId === 'new') {
+                    const name = document.getElementById('projectName').value.trim();
+                    if (!name) throw new Error('Enter a name for the new project');
+                    const pr = await fetch('/projects', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({name, description: ''})
+                    });
+                    if (!pr.ok) throw new Error('Failed to create project');
+                    projectId = (await pr.json()).id;
+                }
+                const keywords = document.getElementById('keywords').value
+                    .split(',').map(k => k.trim()).filter(Boolean);
+                if (keywords.length === 0) throw new Error('Enter at least one keyword');
+
+                const payload = {
+                    project_id: parseInt(projectId),
+                    name: document.getElementById('scraperName').value.trim(),
+                    domain: document.getElementById('domain').value.trim(),
+                    search_terms: keywords,
+                    geo: document.getElementById('geo').value,
+                    max_position: parseInt(document.getElementById('maxPosition').value) || 100,
+                    results_per_page: parseInt(document.getElementById('resultsPerPage').value) || 10,
+                    interval_hours: document.getElementById('scheduleEnabled').checked
+                        ? (parseInt(document.getElementById('intervalHours').value) || 24)
+                        : 0
+                };
+
+                const res = await fetch('/scrapers', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(payload)
+                });
+                if (!res.ok) throw new Error('Failed to save scraper settings');
+                const data = await res.json();
+                msg.textContent = `Saved scraper #${data.id}. Reloading...`;
+                setTimeout(() => location.reload(), 600);
+            } catch (err) {
+                msg.textContent = 'Error: ' + err.message;
+                btn.disabled = false;
+            }
+        });
+
+        // Run a scraper
+        async function runScraper(id) {
+            const res = await fetch(`/scrapers/${id}/run-scheduled`, {method: 'POST'});
+            const data = await res.json();
+            alert(data.message || 'Scraper started');
+            setTimeout(() => loadResults(id), 3000);
+        }
+
+        // Load and render results for a scraper
+        async function loadResults(id) {
+            document.getElementById('resultsScraperId').textContent = `(scraper #${id})`;
+            const tableBody = document.getElementById('resultsTableBody');
+            tableBody.innerHTML = '<tr><td colspan="5" class="empty">Loading...</td></tr>';
+            try {
+                const res = await fetch(`/results/${id}`);
+                if (!res.ok) throw new Error('Failed to load results');
+                const data = await res.json();
+                const results = data.results || [];
+                if (results.length === 0) {
+                    tableBody.innerHTML = '<tr><td colspan="5" class="empty">No results yet. Run the scraper first.</td></tr>';
+                    renderChart([]);
+                    return;
+                }
+                const latest = results[results.length - 1];
+                const rankings = latest.rankings || {};
+                const rows = Object.entries(rankings);
+                if (rows.length === 0) {
+                    tableBody.innerHTML = '<tr><td colspan="5" class="empty">No data.</td></tr>';
+                    renderChart([]);
+                    return;
+                }
+                tableBody.innerHTML = '';
+                rows.forEach(([keyword, info]) => {
+                    const tr = document.createElement('tr');
+                    const pos = info.position || '-';
+                    const found = info.found;
+                    const badge = found
+                        ? '<span class="badge badge-found">Found</span>'
+                        : '<span class="badge badge-missed">Missed</span>';
+                    const urlCell = info.url
+                        ? `<a href="${info.url}" target="_blank" rel="noopener">${info.url}</a>`
+                        : '-';
+                    tr.innerHTML = `
+                        <td>${keyword}</td>
+                        <td>${pos}</td>
+                        <td>${badge}</td>
+                        <td>${urlCell}</td>
+                        <td>${new Date(latest.timestamp).toLocaleString()}</td>
+                    `;
+                    tableBody.appendChild(tr);
+                });
+                renderChart(rows);
+            } catch (err) {
+                tableBody.innerHTML = `<tr><td colspan="5" class="empty">Error: ${err.message}</td></tr>`;
+            }
+        }
+
+        // Render rankings chart
+        function renderChart(rows) {
+            const labels = rows.map(([k]) => k);
+            const positions = rows.map(([, v]) => v.position || 100);
+            const ctx = document.getElementById('rankingsChart').getContext('2d');
+            if (rankingsChart) rankingsChart.destroy();
+            rankingsChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels,
+                    datasets: [{
+                        label: 'Position (lower is better)',
+                        data: positions,
+                        backgroundColor: 'rgba(37, 99, 235, 0.7)',
+                        borderColor: 'rgb(29, 78, 216)',
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    indexAxis: 'y',
+                    plugins: {legend: {display: true}}
+                }
+            });
+        }
+    </script>
+</body>
+</html>

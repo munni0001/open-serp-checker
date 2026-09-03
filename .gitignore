@@ -1,0 +1,37 @@
+# Markdown docs
+*.md
+
+# Environment files
+.env
+.env.*
+*.env
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+*.egg
+dist/
+build/
+.venv/
+venv/
+
+# Databases
+*.db
+*.sqlite
+*.sqlite3
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+*.swp
+
+# Testing / misc
+test_*.py
+verify_*.py
+.pytest_cache/
+.coverage
