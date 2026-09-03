@@ -120,6 +120,17 @@ class Database:
             )
         return None
 
+    def update_project(self, project_id: int, name: str, description: str) -> None:
+        """Update an existing project's name and description."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute(
+            'UPDATE projects SET name=?, description=?, updated_at=? WHERE id=?',
+            (name, description, datetime.utcnow().isoformat(), project_id)
+        )
+        conn.commit()
+        conn.close()
+
     def get_all_projects(self) -> List[Project]:
         """Retrieve all projects from the database."""
         conn = sqlite3.connect(self.db_path)

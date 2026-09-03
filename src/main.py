@@ -79,6 +79,14 @@ async def create_project(payload: ProjectCreate):
     return {"id": project_id, "name": payload.name, "description": payload.description}
 
 
+@app.patch("/projects/{project_id}")
+async def update_project(project_id: int, payload: ProjectCreate):
+    if not db.get_project(project_id):
+        raise HTTPException(status_code=404, detail="Project not found")
+    db.update_project(project_id, payload.name, payload.description)
+    return {"id": project_id, "name": payload.name, "description": payload.description}
+
+
 # ---------- Scraper endpoints ----------
 
 @app.get("/scrapers")
