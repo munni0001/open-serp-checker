@@ -7,56 +7,95 @@ from pydantic import BaseModel
 
 from src.config import settings
 from src.core.database import Database
-from src.core.managers import ProxyManager, ScraperManager
-from src.core.scraper import SerpScraper
-from src.models import Project, ScraperSettings
+from src.core.managers import KeywordManager, ProxyManager
+from src.models import Project
 
-app = FastAPI(title="SERP Scraper API", version="0.1.0")
+app = FastAPI(title="SERP Scraper API", version="0.2.0")
 
 db = Database(db_path=settings.database_path)
 proxy_manager = ProxyManager(db)
-scraper_manager = ScraperManager(db)
+keyword_manager = KeywordManager(db)
 
 templates = Jinja2Templates(directory="src/dashboard/templates")
 app.mount("/static", StaticFiles(directory="src/dashboard/static"), name="static")
 
 
-# ---------- Request/Response schemas ----------
+# ---------- Request schemas ----------
 
 class ProjectCreate(BaseModel):
     name: str
     description: str = ""
-
-
-class ScraperCreate(BaseModel):
-    project_id: int
-    name: str
     domain: str = ""
-    search_terms: List[str]
-    geo: str = "us"
-    language: str = "en"
-    results_per_page: int = 10
-    max_pages: int = 1
-    max_position: int = 100
-    interval_hours: int = 24
-    proxy_id: Optional[int] = None
+    default_geo: str = "us"
+    default_interval_hours: int = 24
+    default_max_position: int = 100
+    default_results_per_page: int = 10
 
 
-class RunResponse(BaseModel):
-    scraper_id: int
-    status: str
-    message: str
+class ProjectPatch(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    domain: Optional[str] = None
+    default_geo: Optional[str] = None
+    default_interval_hours: Optional[int] = None
+    default_max_position: Optional[int] = None
+    default_results_per_page: Optional[int] = None
 
 
-# ---------- Frontend ----------
+class KeywordCreate(BaseModel):
+    term: str
+    geo: Optional[str] = None
+    interval_hours: Optional[int] = None
+    max_position: Optional[int] = None
+    results_per_page: Optional[int] = None
+
+
+class KeywordBulkCreate(BaseModel):
+    terms: List[str]
+    geo: Optional[str] = None
+    interval_hours: Optional[int] = None
+    max_position: Optional[int] = None
+    results_per_page: Optional[int] = None
+
+
+class KeywordPatch(BaseModel):
+    term: Optional[str] = None
+    geo: Optional[str] = None
+    interval_hours: Optional[int] = None
+    max_position: Optional[int] = None
+    results_per_page: Optional[int] = None
+
+
+# ---------- Pages ----------
 
 @app.get("/")
-async def root(request: Request):
-    context = {
-        "projects": db.get_all_projects(),
-        "scrapers": db.get_all_scraper_settings(),
-    }
-    return templates.TemplateResponse(request=request, name="index.html", context=context)
+async def projects_page(request: Request):
+    projects = db.get_all_projects()
+    counts = db.count_keywords_by_project()
+    return templates.TemplateResponse(
+        request=request,
+        name="projects.html",
+        context={
+            "projects": projects,
+            "keyword_counts": counts,
+        },
+    )
+
+
+@app.get("/project/{project_id}")
+async def project_page(request: Request, project_id: int):
+    project = db.get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    summary = db.get_keyword_summary(project_id)
+    return templates.TemplateResponse(
+        request=request,
+        name="project.html",
+        context={
+            "project": project,
+            "keyword_rows": summary,
+        },
+    )
 
 
 @app.get("/health")
@@ -64,94 +103,135 @@ async def health_check():
     return {"status": "healthy"}
 
 
-# ---------- Project endpoints ----------
+# ---------- Project API ----------
 
 @app.get("/projects")
-async def get_projects():
+async def list_projects():
     projects = db.get_all_projects()
-    return {"projects": [p.model_dump() for p in projects]}
+    counts = db.count_keywords_by_project()
+    return {
+        "projects": [
+            {**p.model_dump(mode="json"), "keyword_count": counts.get(p.id, 0)}
+            for p in projects
+        ]
+    }
 
 
 @app.post("/projects")
 async def create_project(payload: ProjectCreate):
-    project = Project(name=payload.name, description=payload.description)
+    project = Project(**payload.model_dump())
     project_id = db.create_project(project)
-    return {"id": project_id, "name": payload.name, "description": payload.description}
+    return {"id": project_id, **payload.model_dump()}
 
 
 @app.patch("/projects/{project_id}")
-async def update_project(project_id: int, payload: ProjectCreate):
+async def update_project(project_id: int, payload: ProjectPatch):
     if not db.get_project(project_id):
         raise HTTPException(status_code=404, detail="Project not found")
-    db.update_project(project_id, payload.name, payload.description)
-    return {"id": project_id, "name": payload.name, "description": payload.description}
+    db.update_project(project_id, **payload.model_dump(exclude_unset=True))
+    updated = db.get_project(project_id)
+    return updated.model_dump(mode="json")
 
 
-# ---------- Scraper endpoints ----------
+@app.delete("/projects/{project_id}")
+async def delete_project(project_id: int):
+    if not db.delete_project(project_id):
+        raise HTTPException(status_code=404, detail="Project not found")
+    return {"deleted": project_id}
 
-@app.get("/scrapers")
-async def get_scrapers():
-    scrapers = db.get_all_scraper_settings()
-    return {"scrapers": [s.model_dump() for s in scrapers]}
+
+# ---------- Keyword API ----------
+
+@app.get("/projects/{project_id}/keywords")
+async def list_keywords(project_id: int):
+    if not db.get_project(project_id):
+        raise HTTPException(status_code=404, detail="Project not found")
+    return {"keywords": db.get_keyword_summary(project_id)}
 
 
-@app.post("/scrapers")
-async def create_scraper(payload: ScraperCreate):
-    if not db.get_project(payload.project_id):
+@app.post("/projects/{project_id}/keywords")
+async def create_keyword(project_id: int, payload: KeywordCreate):
+    project = db.get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    keyword_id = keyword_manager.add_keyword(
+        project,
+        payload.term,
+        geo=payload.geo,
+        interval_hours=payload.interval_hours,
+        max_position=payload.max_position,
+        results_per_page=payload.results_per_page,
+    )
+    return db.get_keyword(keyword_id).model_dump(mode="json")
+
+
+@app.post("/projects/{project_id}/keywords/bulk")
+async def create_keywords_bulk(project_id: int, payload: KeywordBulkCreate):
+    project = db.get_project(project_id)
+    if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    scraper_settings = ScraperSettings(
-        project_id=payload.project_id,
-        name=payload.name,
-        domain=payload.domain,
-        search_terms=payload.search_terms,
-        geo=payload.geo,
-        language=payload.language,
-        results_per_page=payload.results_per_page,
-        max_pages=payload.max_pages,
-        max_position=payload.max_position,
-        interval_hours=payload.interval_hours,
-    )
-    settings_id = scraper_manager.add_scraper_settings(scraper_settings)
-    return {"id": settings_id, **payload.model_dump()}
+    terms = [t.strip() for t in payload.terms if t and t.strip()]
+    if not terms:
+        raise HTTPException(status_code=400, detail="No terms provided")
+
+    created = []
+    for term in terms:
+        kw_id = keyword_manager.add_keyword(
+            project, term,
+            geo=payload.geo,
+            interval_hours=payload.interval_hours,
+            max_position=payload.max_position,
+            results_per_page=payload.results_per_page,
+        )
+        created.append(kw_id)
+    return {"created": created, "count": len(created)}
 
 
-@app.post("/scrapers/{scraper_id}/run")
-async def run_scraper(scraper_id: int):
-    scraper_settings = scraper_manager.get_scraper_settings(scraper_id)
-    if not scraper_settings:
-        raise HTTPException(status_code=404, detail="Scraper settings not found")
-
-    scraper = SerpScraper(db)
-    result = await scraper.run_scraper_batch(scraper_settings)
-    return {
-        "scraper_id": scraper_id,
-        "status": "completed",
-        "result_id": result.id,
-        "message": f"Scraped {len(scraper_settings.search_terms)} keywords",
-    }
+@app.patch("/keywords/{keyword_id}")
+async def update_keyword(keyword_id: int, payload: KeywordPatch):
+    if not db.get_keyword(keyword_id):
+        raise HTTPException(status_code=404, detail="Keyword not found")
+    db.update_keyword(keyword_id, **payload.model_dump(exclude_unset=True))
+    return db.get_keyword(keyword_id).model_dump(mode="json")
 
 
-@app.post("/scrapers/{scraper_id}/run-scheduled")
-async def run_scraper_scheduled(scraper_id: int, background: BackgroundTasks):
-    """Run a scraper in the background so the request returns immediately."""
-    scraper_settings = scraper_manager.get_scraper_settings(scraper_id)
-    if not scraper_settings:
-        raise HTTPException(status_code=404, detail="Scraper settings not found")
+@app.delete("/keywords/{keyword_id}")
+async def delete_keyword(keyword_id: int):
+    if not db.delete_keyword(keyword_id):
+        raise HTTPException(status_code=404, detail="Keyword not found")
+    return {"deleted": keyword_id}
+
+
+@app.post("/keywords/{keyword_id}/run")
+async def run_keyword(keyword_id: int):
+    if not db.get_keyword(keyword_id):
+        raise HTTPException(status_code=404, detail="Keyword not found")
+    result = await keyword_manager.run_keyword(keyword_id)
+    return result.model_dump(mode="json")
+
+
+@app.post("/keywords/{keyword_id}/run-scheduled")
+async def run_keyword_scheduled(keyword_id: int, background: BackgroundTasks):
+    if not db.get_keyword(keyword_id):
+        raise HTTPException(status_code=404, detail="Keyword not found")
 
     async def _run():
-        await SerpScraper(db).run_scraper_batch(scraper_settings)
+        await keyword_manager.run_keyword(keyword_id)
 
     background.add_task(_run)
-    return {"scraper_id": scraper_id, "status": "started", "message": "Scheduled in background"}
+    return {"keyword_id": keyword_id, "status": "started"}
 
 
-# ---------- Results endpoints ----------
-
-@app.get("/results/{scraper_id}")
-async def get_results(scraper_id: int):
-    results = db.get_scraping_results(scraper_id)
-    return {"scraper_id": scraper_id, "results": [r.model_dump() for r in results]}
+@app.get("/keywords/{keyword_id}/history")
+async def keyword_history(keyword_id: int):
+    if not db.get_keyword(keyword_id):
+        raise HTTPException(status_code=404, detail="Keyword not found")
+    history = db.get_keyword_history(keyword_id)
+    return {
+        "timestamps": [h.timestamp.isoformat() for h in history],
+        "positions": [h.position for h in history],
+    }
 
 
 if __name__ == "__main__":

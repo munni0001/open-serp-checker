@@ -1,0 +1,13 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><title>serp-scrape · projects</title></head>
+<body>
+<h1>Projects</h1>
+<ul>
+{% for p in projects %}
+  <li><a href="/project/{{ p.id }}">{{ p.name }}</a> — {{ p.domain }} — {{ keyword_counts.get(p.id, 0) }} keywords</li>
+{% else %}
+  <li>No projects yet.</li>
+{% endfor %}
+</ul>
+<p>Placeholder. UI lands in commit 2.</p>
+</body></html>

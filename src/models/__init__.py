@@ -1,29 +1,32 @@
-from typing import Optional, List, Dict
+from typing import Optional
 from pydantic import BaseModel, Field
 from datetime import datetime
 from enum import Enum
 
+
 class ProxyType(str, Enum):
     FREE = "free"
     PAID = "paid"
+
 
 class ProxyProvider(str, Enum):
     MANUAL = "manual"
     DATAFORSEO = "dataforseo"
     SERPER = "serper"
 
-class ScraperStatus(str, Enum):
-    PENDING = "pending"
-    RUNNING = "running"
-    COMPLETED = "completed"
-    FAILED = "failed"
 
 class Project(BaseModel):
     id: Optional[int] = None
     name: str
     description: Optional[str] = ""
+    domain: Optional[str] = ""
+    default_geo: str = "us"
+    default_interval_hours: int = 24
+    default_max_position: int = 100
+    default_results_per_page: int = 10
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+
 
 class Proxy(BaseModel):
     id: Optional[int] = None
@@ -37,24 +40,25 @@ class Proxy(BaseModel):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
-class ScraperSettings(BaseModel):
+
+class Keyword(BaseModel):
     id: Optional[int] = None
     project_id: int
-    name: str
-    domain: Optional[str] = ""
-    search_terms: List[str]
-    geo: str
-    language: str = "en"
-    results_per_page: int = 10
-    max_pages: int = 1
-    max_position: int = 100
+    term: str
+    geo: str = "us"
+    engine: str = "bing"
     interval_hours: int = 24
+    max_position: int = 100
+    results_per_page: int = 10
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+    last_run_at: Optional[datetime] = None
 
-class ScrapingResult(BaseModel):
+
+class KeywordResult(BaseModel):
     id: Optional[int] = None
-    scraper_id: int
-    timestamp: datetime
-    rankings: Dict[str, Dict[str, object]]
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    keyword_id: int
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    position: Optional[int] = None
+    url: Optional[str] = ""
+    found: bool = False
