@@ -33,8 +33,23 @@ class SerpScraper:
         self.db = db
         self.timeout = timeout
 
+    def _resolve_proxy(self, keyword: Keyword, project: Project, override) -> Optional[str]:
+        """Priority: explicit override → keyword.proxy_id → project.default_proxy_id → env → None."""
+        if override is not None:
+            return build_proxy_url(override)
+        if keyword.proxy_id:
+            p = self.db.get_proxy(keyword.proxy_id)
+            if p:
+                return build_proxy_url(p)
+        if project.default_proxy_id:
+            p = self.db.get_proxy(project.default_proxy_id)
+            if p:
+                return build_proxy_url(p)
+        return settings.serp_proxy_url
+
     async def scrape_keyword(self, keyword: Keyword, project: Project, proxy=None) -> KeywordResult:
-        proxy_url = build_proxy_url(proxy) or settings.serp_proxy_url
+        proxy_url = self._resolve_proxy(keyword, project, proxy)
+        html: str = ""
 
         try:
             if keyword.engine == "bing":
@@ -74,6 +89,7 @@ class SerpScraper:
             found=match["found"],
             status=match["status"],
             error=match["error"],
+            bytes_downloaded=len(html.encode("utf-8")) if html else 0,
         )
         result.id = self.db.create_keyword_result(result)
         self.db.touch_keyword_run(keyword.id, result.timestamp)

@@ -85,6 +85,16 @@ class Database:
             cursor.execute("ALTER TABLE keyword_results ADD COLUMN status TEXT NOT NULL DEFAULT 'ok'")
         if 'error' not in existing_cols:
             cursor.execute("ALTER TABLE keyword_results ADD COLUMN error TEXT")
+        if 'bytes_downloaded' not in existing_cols:
+            cursor.execute("ALTER TABLE keyword_results ADD COLUMN bytes_downloaded INTEGER NOT NULL DEFAULT 0")
+
+        proj_cols = {row[1] for row in cursor.execute('PRAGMA table_info(projects)').fetchall()}
+        if 'default_proxy_id' not in proj_cols:
+            cursor.execute("ALTER TABLE projects ADD COLUMN default_proxy_id INTEGER REFERENCES proxies(id) ON DELETE SET NULL")
+
+        kw_cols = {row[1] for row in cursor.execute('PRAGMA table_info(keywords)').fetchall()}
+        if 'proxy_id' not in kw_cols:
+            cursor.execute("ALTER TABLE keywords ADD COLUMN proxy_id INTEGER REFERENCES proxies(id) ON DELETE SET NULL")
 
         conn.commit()
         conn.close()
@@ -103,6 +113,7 @@ class Database:
             default_results_per_page=row[7],
             created_at=datetime.fromisoformat(row[8]),
             updated_at=datetime.fromisoformat(row[9]),
+            default_proxy_id=row[10] if len(row) > 10 else None,
         )
 
     def create_project(self, project: Project) -> int:
@@ -143,8 +154,13 @@ class Database:
         allowed = {
             'name', 'description', 'domain', 'default_geo',
             'default_interval_hours', 'default_max_position', 'default_results_per_page',
+            'default_proxy_id',
         }
-        updates = {k: v for k, v in fields.items() if k in allowed and v is not None}
+        nullable = {'default_proxy_id'}
+        updates = {
+            k: v for k, v in fields.items()
+            if k in allowed and (v is not None or k in nullable)
+        }
         if not updates:
             return
         updates['updated_at'] = datetime.utcnow().isoformat()
@@ -204,7 +220,7 @@ class Database:
 
     def get_all_proxies(self) -> List[Proxy]:
         conn = self._connect()
-        rows = conn.execute('SELECT * FROM proxies').fetchall()
+        rows = conn.execute('SELECT * FROM proxies ORDER BY id ASC').fetchall()
         conn.close()
         return [
             Proxy(
@@ -215,6 +231,43 @@ class Database:
             )
             for r in rows
         ]
+
+    def update_proxy(self, proxy_id: int, **fields) -> None:
+        allowed = {'name', 'type', 'provider', 'username', 'password', 'host', 'port'}
+        updates = {k: v for k, v in fields.items() if k in allowed and v is not None}
+        if not updates:
+            return
+        updates['updated_at'] = datetime.utcnow().isoformat()
+        cols = ', '.join(f'{k}=?' for k in updates)
+        conn = self._connect()
+        conn.execute(f'UPDATE proxies SET {cols} WHERE id=?', (*updates.values(), proxy_id))
+        conn.commit()
+        conn.close()
+
+    def delete_proxy(self, proxy_id: int) -> bool:
+        conn = self._connect()
+        cursor = conn.execute('DELETE FROM proxies WHERE id = ?', (proxy_id,))
+        conn.commit()
+        deleted = cursor.rowcount > 0
+        conn.close()
+        return deleted
+
+    def proxy_assignments(self) -> dict:
+        """Returns {proxy_id: {'keywords': N, 'projects': M}} for all proxies."""
+        conn = self._connect()
+        kw_rows = conn.execute(
+            'SELECT proxy_id, COUNT(*) FROM keywords WHERE proxy_id IS NOT NULL GROUP BY proxy_id'
+        ).fetchall()
+        proj_rows = conn.execute(
+            'SELECT default_proxy_id, COUNT(*) FROM projects WHERE default_proxy_id IS NOT NULL GROUP BY default_proxy_id'
+        ).fetchall()
+        conn.close()
+        out = {}
+        for pid, n in kw_rows:
+            out.setdefault(pid, {'keywords': 0, 'projects': 0})['keywords'] = n
+        for pid, n in proj_rows:
+            out.setdefault(pid, {'keywords': 0, 'projects': 0})['projects'] = n
+        return out
 
     # ---------- Keywords ----------
 
@@ -231,6 +284,7 @@ class Database:
             created_at=datetime.fromisoformat(row[8]),
             updated_at=datetime.fromisoformat(row[9]),
             last_run_at=datetime.fromisoformat(row[10]) if row[10] else None,
+            proxy_id=row[11] if len(row) > 11 else None,
         )
 
     def create_keyword(self, keyword: Keyword) -> int:
@@ -267,8 +321,12 @@ class Database:
         return [self._row_to_keyword(r) for r in rows]
 
     def update_keyword(self, keyword_id: int, **fields) -> None:
-        allowed = {'term', 'geo', 'engine', 'interval_hours', 'max_position', 'results_per_page'}
-        updates = {k: v for k, v in fields.items() if k in allowed and v is not None}
+        allowed = {'term', 'geo', 'engine', 'interval_hours', 'max_position', 'results_per_page', 'proxy_id'}
+        nullable = {'proxy_id'}
+        updates = {
+            k: v for k, v in fields.items()
+            if k in allowed and (v is not None or k in nullable)
+        }
         if not updates:
             return
         updates['updated_at'] = datetime.utcnow().isoformat()
@@ -301,12 +359,12 @@ class Database:
         conn = self._connect()
         cursor = conn.cursor()
         cursor.execute('''
-            INSERT INTO keyword_results (keyword_id, timestamp, position, url, found, status, error)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO keyword_results (keyword_id, timestamp, position, url, found, status, error, bytes_downloaded)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             result.keyword_id, result.timestamp.isoformat(),
             result.position, result.url, 1 if result.found else 0,
-            result.status, result.error,
+            result.status, result.error, result.bytes_downloaded,
         ))
         result_id = cursor.lastrowid
         conn.commit()
@@ -326,6 +384,7 @@ class Database:
                 timestamp=datetime.fromisoformat(r[2]),
                 position=r[3], url=r[4] or "", found=bool(r[5]),
                 status=r[6] or "ok", error=r[7],
+                bytes_downloaded=r[8] if len(r) > 8 and r[8] is not None else 0,
             )
             for r in rows
         ]

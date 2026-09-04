@@ -11,8 +11,12 @@ class ProxyType(str, Enum):
 
 class ProxyProvider(str, Enum):
     MANUAL = "manual"
+    DECODO = "decodo"
+    OXYLABS = "oxylabs"
+    SHIFTER = "shifter"
     DATAFORSEO = "dataforseo"
     SERPER = "serper"
+    OTHER = "other"
 
 
 class Project(BaseModel):
@@ -24,6 +28,7 @@ class Project(BaseModel):
     default_interval_hours: int = 24
     default_max_position: int = 100
     default_results_per_page: int = 10
+    default_proxy_id: Optional[int] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -50,6 +55,7 @@ class Keyword(BaseModel):
     interval_hours: int = 24
     max_position: int = 100
     results_per_page: int = 10
+    proxy_id: Optional[int] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
     last_run_at: Optional[datetime] = None
@@ -64,3 +70,4 @@ class KeywordResult(BaseModel):
     found: bool = False
     status: Literal["ok", "blocked", "error"] = "ok"
     error: Optional[str] = None
+    bytes_downloaded: int = 0
