@@ -1,5 +1,7 @@
+import time
 from typing import List, Optional
 
+import httpx
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -8,7 +10,8 @@ from pydantic import BaseModel
 from src.config import settings
 from src.core.database import Database
 from src.core.managers import KeywordManager, ProxyManager
-from src.models import Project
+from src.core.scraper import build_proxy_url
+from src.models import Project, Proxy, ProxyProvider, ProxyType
 
 app = FastAPI(title="SERP Scraper API", version="0.2.0")
 
@@ -40,6 +43,7 @@ class ProjectPatch(BaseModel):
     default_interval_hours: Optional[int] = None
     default_max_position: Optional[int] = None
     default_results_per_page: Optional[int] = None
+    default_proxy_id: Optional[int] = None
 
 
 class KeywordCreate(BaseModel):
@@ -49,6 +53,7 @@ class KeywordCreate(BaseModel):
     interval_hours: Optional[int] = None
     max_position: Optional[int] = None
     results_per_page: Optional[int] = None
+    proxy_id: Optional[int] = None
 
 
 class KeywordBulkCreate(BaseModel):
@@ -58,6 +63,7 @@ class KeywordBulkCreate(BaseModel):
     interval_hours: Optional[int] = None
     max_position: Optional[int] = None
     results_per_page: Optional[int] = None
+    proxy_id: Optional[int] = None
 
 
 class KeywordPatch(BaseModel):
@@ -67,6 +73,27 @@ class KeywordPatch(BaseModel):
     interval_hours: Optional[int] = None
     max_position: Optional[int] = None
     results_per_page: Optional[int] = None
+    proxy_id: Optional[int] = None
+
+
+class ProxyCreate(BaseModel):
+    name: str
+    type: ProxyType = ProxyType.PAID
+    provider: ProxyProvider = ProxyProvider.MANUAL
+    host: str = ""
+    port: int = 0
+    username: str = ""
+    password: str = ""
+
+
+class ProxyPatch(BaseModel):
+    name: Optional[str] = None
+    type: Optional[ProxyType] = None
+    provider: Optional[ProxyProvider] = None
+    host: Optional[str] = None
+    port: Optional[int] = None
+    username: Optional[str] = None
+    password: Optional[str] = None
 
 
 # ---------- Pages ----------
@@ -91,12 +118,32 @@ async def project_page(request: Request, project_id: int):
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     summary = db.get_keyword_summary(project_id)
+    proxies = db.get_all_proxies()
+    proxy_names = {p.id: p.name for p in proxies}
     return templates.TemplateResponse(
         request=request,
         name="project.html",
         context={
             "project": project,
             "keyword_rows": summary,
+            "proxies": [p.model_dump(mode="json") for p in proxies],
+            "proxy_names": proxy_names,
+        },
+    )
+
+
+@app.get("/proxies", response_class=None)
+async def proxies_page(request: Request):
+    proxies = db.get_all_proxies()
+    assignments = db.proxy_assignments()
+    return templates.TemplateResponse(
+        request=request,
+        name="proxies.html",
+        context={
+            "proxies": [p.model_dump(mode="json") for p in proxies],
+            "assignments": assignments,
+            "providers": [p.value for p in ProxyProvider],
+            "types": [t.value for t in ProxyType],
         },
     )
 
@@ -104,6 +151,79 @@ async def project_page(request: Request, project_id: int):
 @app.get("/health")
 async def health_check():
     return {"status": "healthy"}
+
+
+# ---------- Proxy API ----------
+
+def _proxy_out(p: Proxy, assignments: dict) -> dict:
+    row = assignments.get(p.id, {})
+    return {
+        **p.model_dump(mode="json"),
+        "keyword_count": row.get("keywords", 0),
+        "project_count": row.get("projects", 0),
+    }
+
+
+@app.get("/api/proxies")
+async def list_proxies():
+    proxies = db.get_all_proxies()
+    assignments = db.proxy_assignments()
+    return {"proxies": [_proxy_out(p, assignments) for p in proxies]}
+
+
+@app.get("/api/proxies/{proxy_id}")
+async def get_proxy(proxy_id: int):
+    p = db.get_proxy(proxy_id)
+    if not p:
+        raise HTTPException(status_code=404, detail="Proxy not found")
+    return _proxy_out(p, db.proxy_assignments())
+
+
+@app.post("/api/proxies")
+async def create_proxy(payload: ProxyCreate):
+    proxy = Proxy(**payload.model_dump())
+    proxy_id = proxy_manager.add_proxy(proxy)
+    p = db.get_proxy(proxy_id)
+    return _proxy_out(p, {})
+
+
+@app.patch("/api/proxies/{proxy_id}")
+async def update_proxy(proxy_id: int, payload: ProxyPatch):
+    if not db.get_proxy(proxy_id):
+        raise HTTPException(status_code=404, detail="Proxy not found")
+    db.update_proxy(proxy_id, **payload.model_dump(exclude_unset=True))
+    p = db.get_proxy(proxy_id)
+    return _proxy_out(p, db.proxy_assignments())
+
+
+@app.delete("/api/proxies/{proxy_id}")
+async def delete_proxy(proxy_id: int):
+    if not db.delete_proxy(proxy_id):
+        raise HTTPException(status_code=404, detail="Proxy not found")
+    return {"deleted": proxy_id}
+
+
+@app.post("/api/proxies/{proxy_id}/test")
+async def test_proxy(proxy_id: int):
+    p = db.get_proxy(proxy_id)
+    if not p:
+        raise HTTPException(status_code=404, detail="Proxy not found")
+    proxy_url = build_proxy_url(p)
+    if not proxy_url:
+        return {"ok": False, "latency_ms": 0, "http_status": None,
+                "error": "Proxy has no host/port configured"}
+    start = time.perf_counter()
+    try:
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True, proxy=proxy_url) as client:
+            resp = await client.get("https://www.google.com/search?q=test",
+                                    headers={"User-Agent": "Mozilla/5.0"})
+        elapsed = int((time.perf_counter() - start) * 1000)
+        return {"ok": resp.status_code == 200, "latency_ms": elapsed,
+                "http_status": resp.status_code, "error": None}
+    except Exception as e:
+        elapsed = int((time.perf_counter() - start) * 1000)
+        return {"ok": False, "latency_ms": elapsed, "http_status": None,
+                "error": f"{type(e).__name__}: {e}"[:400]}
 
 
 # ---------- Project API ----------
@@ -165,6 +285,7 @@ async def create_keyword(project_id: int, payload: KeywordCreate):
         interval_hours=payload.interval_hours,
         max_position=payload.max_position,
         results_per_page=payload.results_per_page,
+        proxy_id=payload.proxy_id,
     )
     return db.get_keyword(keyword_id).model_dump(mode="json")
 
@@ -188,6 +309,7 @@ async def create_keywords_bulk(project_id: int, payload: KeywordBulkCreate):
             interval_hours=payload.interval_hours,
             max_position=payload.max_position,
             results_per_page=payload.results_per_page,
+            proxy_id=payload.proxy_id,
         )
         created.append(kw_id)
     return {"created": created, "count": len(created)}

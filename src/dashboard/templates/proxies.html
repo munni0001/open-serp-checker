@@ -1,0 +1,213 @@
+{% extends "_base.html" %}
+{% block title %}Proxies · serp-scrape{% endblock %}
+
+{% block body %}
+<div class="page-head">
+    <div>
+        <h1 class="page-title">Proxies</h1>
+        <p class="page-sub" style="margin:0;">Configure proxies here, then assign per-project or per-keyword. Credentials are stored as plaintext in the local SQLite DB.</p>
+    </div>
+    <button class="btn btn-primary" id="toggleAdd" type="button">
+        <i data-lucide="plus"></i> Add Proxy
+    </button>
+</div>
+
+<div class="card">
+    <div class="collapse hidden" id="addPanel">
+        <form id="proxyForm">
+            <input type="hidden" id="fId" value="">
+            <div class="grid">
+                <div class="field">
+                    <label for="fName">Name</label>
+                    <input id="fName" required placeholder="e.g. decodo-us">
+                </div>
+                <div class="field">
+                    <label for="fProvider">Provider</label>
+                    <select id="fProvider">
+                        {% for p in providers %}<option value="{{ p }}">{{ p }}</option>{% endfor %}
+                    </select>
+                </div>
+                <div class="field">
+                    <label for="fType">Type</label>
+                    <select id="fType">
+                        {% for t in types %}<option value="{{ t }}">{{ t }}</option>{% endfor %}
+                    </select>
+                </div>
+                <div class="field">
+                    <label for="fHost">Host</label>
+                    <input id="fHost" placeholder="gate.decodo.com">
+                </div>
+                <div class="field">
+                    <label for="fPort">Port</label>
+                    <input id="fPort" type="number" min="0" placeholder="7000">
+                </div>
+                <div class="field">
+                    <label for="fUsername">Username</label>
+                    <input id="fUsername" autocomplete="off" placeholder="Optional">
+                </div>
+                <div class="field" style="grid-column: 1 / -1;">
+                    <label for="fPassword">Password</label>
+                    <input id="fPassword" type="password" autocomplete="new-password" placeholder="Optional">
+                </div>
+            </div>
+            <div style="display: flex; gap: 8px; margin-top: 18px;">
+                <button class="btn btn-primary" type="submit" id="submitBtn"><i data-lucide="check"></i> <span id="submitLabel">Create</span></button>
+                <button class="btn btn-ghost" type="button" id="cancelAdd">Cancel</button>
+            </div>
+        </form>
+    </div>
+
+    {% if proxies %}
+    <table>
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Provider</th>
+                <th>Host:Port</th>
+                <th>Assigned</th>
+                <th style="text-align:right;">Actions</th>
+            </tr>
+        </thead>
+        <tbody id="proxyList">
+            {% for p in proxies %}
+            <tr data-id="{{ p.id }}">
+                <td>
+                    <span style="font-weight: 500;">{{ p.name }}</span>
+                    <span class="cell-config" style="display:block;">#{{ p.id }} · {{ p.type }}</span>
+                </td>
+                <td class="cell-config">{{ p.provider }}</td>
+                <td class="cell-config">{{ p.host or '—' }}{% if p.port %}:{{ p.port }}{% endif %}</td>
+                <td class="cell-config">
+                    {% set a = assignments.get(p.id, {}) %}
+                    {{ a.get('keywords', 0) }} kw · {{ a.get('projects', 0) }} proj
+                </td>
+                <td>
+                    <div class="row-actions">
+                        <button class="btn btn-ghost btn-sm" data-action="test" title="Test proxy"><i data-lucide="play"></i></button>
+                        <button class="btn btn-ghost btn-sm" data-action="edit" title="Edit"><i data-lucide="pencil"></i></button>
+                        <button class="btn btn-danger btn-sm" data-action="delete" title="Delete"><i data-lucide="trash-2"></i></button>
+                    </div>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div class="empty-state">
+        <i data-lucide="shield"></i>
+        <div class="title">No proxies configured</div>
+        <div class="sub">Click "Add Proxy" to create your first one.</div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    const panel = document.getElementById('addPanel');
+    const form = document.getElementById('proxyForm');
+    const submitLabel = document.getElementById('submitLabel');
+    const proxyRows = {{ proxies | tojson }};
+    const proxyById = Object.fromEntries(proxyRows.map(p => [p.id, p]));
+
+    const fields = ['Name', 'Provider', 'Type', 'Host', 'Port', 'Username', 'Password'];
+    const $ = (id) => document.getElementById(id);
+
+    function openAdd() {
+        $('fId').value = '';
+        fields.forEach(f => { $(`f${f}`).value = ''; });
+        $('fType').value = 'paid';
+        $('fProvider').value = 'manual';
+        submitLabel.textContent = 'Create';
+        panel.classList.remove('hidden');
+        $('fName').focus();
+    }
+    function openEdit(id) {
+        const p = proxyById[id];
+        if (!p) return;
+        $('fId').value = p.id;
+        $('fName').value = p.name || '';
+        $('fProvider').value = p.provider || 'manual';
+        $('fType').value = p.type || 'paid';
+        $('fHost').value = p.host || '';
+        $('fPort').value = p.port || '';
+        $('fUsername').value = p.username || '';
+        $('fPassword').value = p.password || '';
+        submitLabel.textContent = 'Save';
+        panel.classList.remove('hidden');
+        $('fName').focus();
+    }
+    function closePanel() { panel.classList.add('hidden'); }
+
+    $('toggleAdd').addEventListener('click', () => {
+        if (panel.classList.contains('hidden')) openAdd();
+        else closePanel();
+    });
+    $('cancelAdd').addEventListener('click', closePanel);
+
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const id = $('fId').value;
+        const body = {
+            name: $('fName').value.trim(),
+            provider: $('fProvider').value,
+            type: $('fType').value,
+            host: $('fHost').value.trim(),
+            port: parseInt($('fPort').value, 10) || 0,
+            username: $('fUsername').value,
+            password: $('fPassword').value,
+        };
+        if (!body.name) { toast('Name is required', 'error'); return; }
+        try {
+            if (id) {
+                await api(`/api/proxies/${id}`, { method: 'PATCH', body });
+                toast(`Updated "${body.name}"`);
+            } else {
+                await api('/api/proxies', { method: 'POST', body });
+                toast(`Created "${body.name}"`);
+            }
+            window.location.reload();
+        } catch (err) { toast(err.message, 'error'); }
+    });
+
+    document.getElementById('proxyList')?.addEventListener('click', async (e) => {
+        const btn = e.target.closest('button[data-action]');
+        if (!btn) return;
+        const row = btn.closest('tr[data-id]');
+        const id = parseInt(row.dataset.id, 10);
+        const action = btn.dataset.action;
+        const p = proxyById[id];
+
+        if (action === 'edit') { openEdit(id); return; }
+
+        if (action === 'delete') {
+            if (!confirm(`Delete proxy "${p.name}"? Any keywords/projects using it will fall back to the next tier.`)) return;
+            try {
+                await api(`/api/proxies/${id}`, { method: 'DELETE' });
+                toast(`Deleted "${p.name}"`);
+                window.location.reload();
+            } catch (err) { toast(err.message, 'error'); }
+            return;
+        }
+
+        if (action === 'test') {
+            btn.disabled = true;
+            const orig = btn.innerHTML;
+            btn.innerHTML = '<i data-lucide="loader"></i>';
+            lucide.createIcons();
+            try {
+                const r = await api(`/api/proxies/${id}/test`, { method: 'POST' });
+                if (r.ok) {
+                    toast(`OK · ${r.latency_ms}ms · HTTP ${r.http_status}`);
+                } else {
+                    const msg = r.error || `HTTP ${r.http_status || '?'} · ${r.latency_ms}ms`;
+                    toast(`Test failed: ${msg}`, 'error');
+                }
+            } catch (err) { toast(err.message, 'error'); }
+            btn.disabled = false;
+            btn.innerHTML = orig;
+            lucide.createIcons();
+        }
+    });
+</script>
+{% endblock %}

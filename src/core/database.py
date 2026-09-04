@@ -292,13 +292,14 @@ class Database:
         cursor = conn.cursor()
         cursor.execute('''
             INSERT INTO keywords (project_id, term, geo, engine, interval_hours,
-                max_position, results_per_page, created_at, updated_at, last_run_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                max_position, results_per_page, created_at, updated_at, last_run_at, proxy_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             keyword.project_id, keyword.term, keyword.geo, keyword.engine,
             keyword.interval_hours, keyword.max_position, keyword.results_per_page,
             keyword.created_at.isoformat(), keyword.updated_at.isoformat(),
             keyword.last_run_at.isoformat() if keyword.last_run_at else None,
+            keyword.proxy_id,
         ))
         keyword_id = cursor.lastrowid
         conn.commit()

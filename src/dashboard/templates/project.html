@@ -45,6 +45,18 @@
                 <div class="field"><label>Max position</label><input id="eMaxPos" type="number" min="1" value="{{ project.default_max_position }}"></div>
                 <div class="field"><label>Results/page</label><input id="eRpp" type="number" min="10" step="10" value="{{ project.default_results_per_page }}"></div>
             </div>
+            <div class="grid" style="margin-top: 14px;">
+                <div class="field">
+                    <label for="eProxy">Default proxy</label>
+                    <select id="eProxy">
+                        <option value="">(none — env / direct)</option>
+                        {% for p in proxies %}
+                            <option value="{{ p.id }}"{% if project.default_proxy_id == p.id %} selected{% endif %}>{{ p.name }}</option>
+                        {% endfor %}
+                    </select>
+                    <div class="hint">Used when a keyword doesn't override.</div>
+                </div>
+            </div>
         </div>
         <div style="display: flex; gap: 8px; margin-top: 18px;">
             <button class="btn btn-primary" type="submit"><i data-lucide="check"></i> Save</button>
@@ -78,6 +90,15 @@
                 <div class="field"><label>Interval (h)</label><input id="kwInterval" type="number" min="1" placeholder="{{ project.default_interval_hours }}"></div>
                 <div class="field"><label>Max position</label><input id="kwMaxPos" type="number" min="1" placeholder="{{ project.default_max_position }}"></div>
             </div>
+            <div class="grid" style="margin-top: 14px;">
+                <div class="field">
+                    <label>Proxy</label>
+                    <select id="kwProxy">
+                        <option value="">(project default)</option>
+                        {% for p in proxies %}<option value="{{ p.id }}">{{ p.name }}</option>{% endfor %}
+                    </select>
+                </div>
+            </div>
             <input type="hidden" id="kwRpp" value="">
             <div style="display: flex; gap: 8px; margin-top: 18px;">
                 <button class="btn btn-primary" type="submit"><i data-lucide="check"></i> Add</button>
@@ -102,9 +123,10 @@
                     <tr class="kw-row clickable" data-id="{{ kw.id }}"
                         data-term="{{ kw.term }}" data-geo="{{ kw.geo }}"
                         data-engine="{{ kw.engine }}" data-interval="{{ kw.interval_hours }}"
-                        data-maxpos="{{ kw.max_position }}" data-rpp="{{ kw.results_per_page }}">
+                        data-maxpos="{{ kw.max_position }}" data-rpp="{{ kw.results_per_page }}"
+                        data-proxy="{{ kw.proxy_id or '' }}">
                         <td class="cell-term">{{ kw.term }}</td>
-                        <td class="cell-config">{{ kw.geo|upper }} · {{ kw.engine }} · {{ kw.interval_hours }}h · top {{ kw.max_position }}</td>
+                        <td class="cell-config">{{ kw.geo|upper }} · {{ kw.engine }} · {{ kw.interval_hours }}h · top {{ kw.max_position }}{% if kw.proxy_id and proxy_names.get(kw.proxy_id) %} · via {{ proxy_names.get(kw.proxy_id) }}{% endif %}</td>
                         <td class="cell-positions"
                             data-p7="{{ row.position_7d_ago if row.position_7d_ago is not none else '' }}"
                             data-p1="{{ row.position_1d_ago if row.position_1d_ago is not none else '' }}"
@@ -145,6 +167,12 @@
         default_max_position: {{ project.default_max_position }},
         default_results_per_page: {{ project.default_results_per_page }},
     };
+    const PROXY_OPTIONS = {{ proxies | tojson }};
+    const PROXY_NAMES = Object.fromEntries(PROXY_OPTIONS.map(p => [p.id, p.name]));
+    const cfgLabel = (kw) => {
+        const base = `${kw.geo.toUpperCase()} · ${kw.engine} · ${kw.interval_hours}h · top ${kw.max_position}`;
+        return kw.proxy_id && PROXY_NAMES[kw.proxy_id] ? `${base} · via ${PROXY_NAMES[kw.proxy_id]}` : base;
+    };
 
     // ---------- Positions rendering ----------
     function renderPositions(cell) {
@@ -172,6 +200,7 @@
 
     document.getElementById('editProjForm').addEventListener('submit', async (e) => {
         e.preventDefault();
+        const proxyVal = document.getElementById('eProxy').value;
         const body = {
             name: document.getElementById('eName').value.trim(),
             domain: document.getElementById('eDomain').value.trim(),
@@ -180,6 +209,7 @@
             default_interval_hours: parseInt(document.getElementById('eInterval').value, 10),
             default_max_position: parseInt(document.getElementById('eMaxPos').value, 10),
             default_results_per_page: parseInt(document.getElementById('eRpp').value, 10),
+            default_proxy_id: proxyVal === '' ? null : parseInt(proxyVal, 10),
         };
         try {
             const p = await api(`/projects/${PROJECT_ID}`, { method: 'PATCH', body });
@@ -219,11 +249,13 @@
         const iv = document.getElementById('kwInterval').value;
         const mp = document.getElementById('kwMaxPos').value;
         const rpp = document.getElementById('kwRpp').value;
+        const px = document.getElementById('kwProxy').value;
         if (engine) body.engine = engine;
         if (geo) body.geo = geo;
         if (iv) body.interval_hours = parseInt(iv, 10);
         if (mp) body.max_position = parseInt(mp, 10);
         if (rpp) body.results_per_page = parseInt(rpp, 10);
+        if (px) body.proxy_id = parseInt(px, 10);
 
         try {
             const res = await api(`/projects/${PROJECT_ID}/keywords/bulk`, { method: 'POST', body });
@@ -381,6 +413,11 @@
 
         cellTerm.innerHTML = `<input class="inline" id="edit-term-${row.dataset.id}" value="${row.dataset.term.replace(/"/g, '&quot;')}">`;
         const eng = row.dataset.engine;
+        const currentProxy = row.dataset.proxy || '';
+        const proxyOpts = ['<option value="">(project default)</option>']
+            .concat(PROXY_OPTIONS.map(p =>
+                `<option value="${p.id}"${String(p.id) === currentProxy ? ' selected' : ''}>${p.name}</option>`
+            )).join('');
         cellCfg.innerHTML = `
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px;">
                 <select class="inline" id="edit-eng-${row.dataset.id}">
@@ -391,6 +428,7 @@
                 <input class="inline" id="edit-int-${row.dataset.id}" type="number" min="1" value="${row.dataset.interval}" placeholder="hours">
                 <input class="inline" id="edit-mp-${row.dataset.id}" type="number" min="1" value="${row.dataset.maxpos}" placeholder="max pos">
                 <input class="inline" id="edit-rpp-${row.dataset.id}" type="number" min="10" step="10" value="${row.dataset.rpp}" placeholder="rpp" style="grid-column: 1 / -1;">
+                <select class="inline" id="edit-px-${row.dataset.id}" style="grid-column: 1 / -1;">${proxyOpts}</select>
             </div>`;
         actions.innerHTML = `
             <button class="icon-btn act-save" title="Save"><i data-lucide="check"></i></button>
@@ -400,6 +438,7 @@
 
     async function saveEdit(row) {
         const id = row.dataset.id;
+        const proxyVal = document.getElementById(`edit-px-${id}`).value;
         const body = {
             term: document.getElementById(`edit-term-${id}`).value.trim(),
             engine: document.getElementById(`edit-eng-${id}`).value,
@@ -407,6 +446,7 @@
             interval_hours: parseInt(document.getElementById(`edit-int-${id}`).value, 10),
             max_position: parseInt(document.getElementById(`edit-mp-${id}`).value, 10),
             results_per_page: parseInt(document.getElementById(`edit-rpp-${id}`).value, 10),
+            proxy_id: proxyVal === '' ? null : parseInt(proxyVal, 10),
         };
         try {
             const kw = await api(`/keywords/${id}`, { method: 'PATCH', body });
@@ -416,9 +456,9 @@
             row.dataset.interval = kw.interval_hours;
             row.dataset.maxpos = kw.max_position;
             row.dataset.rpp = kw.results_per_page;
+            row.dataset.proxy = kw.proxy_id || '';
             row.querySelector('.cell-term').textContent = kw.term;
-            row.querySelector('.cell-config').textContent =
-                `${kw.geo.toUpperCase()} · ${kw.engine} · ${kw.interval_hours}h · top ${kw.max_position}`;
+            row.querySelector('.cell-config').textContent = cfgLabel(kw);
             restoreActions(row);
             row.classList.remove('editing');
             row.classList.add('clickable');
@@ -427,9 +467,15 @@
     }
 
     function cancelEdit(row) {
+        const proxy_id = row.dataset.proxy ? parseInt(row.dataset.proxy, 10) : null;
+        const kw = {
+            geo: row.dataset.geo, engine: row.dataset.engine,
+            interval_hours: parseInt(row.dataset.interval, 10),
+            max_position: parseInt(row.dataset.maxpos, 10),
+            proxy_id,
+        };
         row.querySelector('.cell-term').textContent = row.dataset.term;
-        row.querySelector('.cell-config').textContent =
-            `${row.dataset.geo.toUpperCase()} · ${row.dataset.engine} · ${row.dataset.interval}h · top ${row.dataset.maxpos}`;
+        row.querySelector('.cell-config').textContent = cfgLabel(kw);
         restoreActions(row);
         row.classList.remove('editing');
         row.classList.add('clickable');

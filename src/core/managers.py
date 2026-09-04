@@ -36,6 +36,7 @@ class KeywordManager:
             interval_hours=overrides.get("interval_hours") or project.default_interval_hours,
             max_position=overrides.get("max_position") or project.default_max_position,
             results_per_page=overrides.get("results_per_page") or project.default_results_per_page,
+            proxy_id=overrides.get("proxy_id"),
         )
         return self.db.create_keyword(keyword)
 
