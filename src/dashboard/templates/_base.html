@@ -141,6 +141,9 @@
         .pos-ok   { background: rgba(113, 113, 122, 0.18); color: var(--pos-ok); }
         .pos-bad  { background: rgba(239, 68, 68, 0.12); color: var(--pos-bad); }
         .pos-none { color: var(--text-faint); font-family: var(--font-mono); font-size: 13px; }
+        .pos-pill.dimmed { opacity: 0.45; }
+        .pos-warn { display: inline-flex; align-items: center; margin-left: 4px; color: var(--pos-bad); cursor: help; }
+        .pos-warn svg { width: 13px; height: 13px; }
         .trend { display: inline-flex; align-items: center; gap: 2px; font-family: var(--font-mono); font-size: 12px; margin-left: 6px; }
         .trend-up { color: var(--pos-top); }
         .trend-down { color: var(--pos-bad); }
@@ -279,10 +282,11 @@
         };
 
         // Position pill class picker
-        window.posPill = function(p) {
+        window.posPill = function(p, dimmed = false) {
             if (p == null) return '<span class="pos-none">—</span>';
             const kind = p <= 3 ? 'pos-top' : p <= 10 ? 'pos-good' : p <= 30 ? 'pos-ok' : 'pos-bad';
-            return `<span class="pos-pill ${kind}">#${p}</span>`;
+            const dim = dimmed ? ' dimmed' : '';
+            return `<span class="pos-pill ${kind}${dim}">#${p}</span>`;
         };
 
         // Trend indicator (compares now vs older)

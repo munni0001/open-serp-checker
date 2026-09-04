@@ -67,11 +67,18 @@
                 <div class="hint">Each keyword is created with the project defaults below. Blank = use project defaults.</div>
             </div>
             <div class="grid-4" style="margin-top: 14px;">
+                <div class="field">
+                    <label>Engine</label>
+                    <select id="kwEngine">
+                        <option value="bing">bing</option>
+                        <option value="google">google</option>
+                    </select>
+                </div>
                 <div class="field"><label>Geo</label><input id="kwGeo" placeholder="{{ project.default_geo }}"></div>
                 <div class="field"><label>Interval (h)</label><input id="kwInterval" type="number" min="1" placeholder="{{ project.default_interval_hours }}"></div>
                 <div class="field"><label>Max position</label><input id="kwMaxPos" type="number" min="1" placeholder="{{ project.default_max_position }}"></div>
-                <div class="field"><label>Results/page</label><input id="kwRpp" type="number" min="10" step="10" placeholder="{{ project.default_results_per_page }}"></div>
             </div>
+            <input type="hidden" id="kwRpp" value="">
             <div style="display: flex; gap: 8px; margin-top: 18px;">
                 <button class="btn btn-primary" type="submit"><i data-lucide="check"></i> Add</button>
                 <button class="btn btn-ghost" type="button" id="cancelAddKw">Cancel</button>
@@ -101,7 +108,9 @@
                         <td class="cell-positions"
                             data-p7="{{ row.position_7d_ago if row.position_7d_ago is not none else '' }}"
                             data-p1="{{ row.position_1d_ago if row.position_1d_ago is not none else '' }}"
-                            data-pnow="{{ row.latest_position if row.latest_position is not none else '' }}">
+                            data-pnow="{{ row.latest_position if row.latest_position is not none else '' }}"
+                            data-status="{{ row.latest_status or 'ok' }}"
+                            data-error="{{ row.latest_error or '' }}">
                             <!-- rendered by JS -->
                         </td>
                         <td style="text-align: right;">
@@ -142,9 +151,14 @@
         const p7 = cell.dataset.p7 === '' ? null : parseInt(cell.dataset.p7, 10);
         const p1 = cell.dataset.p1 === '' ? null : parseInt(cell.dataset.p1, 10);
         const now = cell.dataset.pnow === '' ? null : parseInt(cell.dataset.pnow, 10);
+        const blocked = (cell.dataset.status || 'ok') === 'blocked';
+        const err = (cell.dataset.error || '').replace(/"/g, '&quot;');
+        const warn = blocked
+            ? `<span class="pos-warn" title="Latest run blocked: ${err || 'unknown reason'}"><i data-lucide="alert-triangle"></i></span>`
+            : '';
         cell.innerHTML = `
             <span class="cell-pos">
-                ${posPill(p7)}<span class="sep">·</span>${posPill(p1)}<span class="sep">·</span>${posPill(now)}
+                ${posPill(p7)}<span class="sep">·</span>${posPill(p1)}<span class="sep">·</span>${posPill(now, blocked)}${warn}
                 ${trend(now, p7)}
             </span>`;
         lucide.createIcons();
@@ -200,10 +214,12 @@
         if (!terms.length) { toast('Enter at least one keyword', 'error'); return; }
 
         const body = { terms };
+        const engine = document.getElementById('kwEngine').value;
         const geo = document.getElementById('kwGeo').value.trim();
         const iv = document.getElementById('kwInterval').value;
         const mp = document.getElementById('kwMaxPos').value;
         const rpp = document.getElementById('kwRpp').value;
+        if (engine) body.engine = engine;
         if (geo) body.geo = geo;
         if (iv) body.interval_hours = parseInt(iv, 10);
         if (mp) body.max_position = parseInt(mp, 10);
@@ -309,11 +325,25 @@
         toast('Running…');
         try {
             const res = await api(`/keywords/${kwId}/run`, { method: 'POST' });
-            // shift positions: p1 becomes p7 window later; here we just refresh "now"
             const cell = row.querySelector('.cell-positions');
-            cell.dataset.pnow = res.position ?? '';
-            renderPositions(cell);
-            toast(res.found ? `Found at #${res.position}` : 'Not in results');
+            if (res.status === 'blocked') {
+                // Preserve last-known-good pnow; mark the cell as blocked so
+                // the pill dims and the warn icon appears.
+                cell.dataset.status = 'blocked';
+                cell.dataset.error = res.error || '';
+                renderPositions(cell);
+                toast(`⚠ Engine blocked — ${res.error || 'check proxy'}`, 'error');
+            } else if (res.status === 'error') {
+                cell.dataset.status = 'ok'; // don't dim on transport errors
+                renderPositions(cell);
+                toast(res.error || 'Transport error', 'error');
+            } else {
+                cell.dataset.pnow = res.position ?? '';
+                cell.dataset.status = 'ok';
+                cell.dataset.error = '';
+                renderPositions(cell);
+                toast(res.found ? `Found at #${res.position}` : 'Not in results');
+            }
             // if row is expanded, refresh chart
             const next = row.nextElementSibling;
             if (next && next.classList.contains('expand-row') && next.dataset.for === kwId) {
@@ -350,12 +380,17 @@
         const actions = row.querySelector('.row-actions');
 
         cellTerm.innerHTML = `<input class="inline" id="edit-term-${row.dataset.id}" value="${row.dataset.term.replace(/"/g, '&quot;')}">`;
+        const eng = row.dataset.engine;
         cellCfg.innerHTML = `
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px;">
+                <select class="inline" id="edit-eng-${row.dataset.id}">
+                    <option value="bing"${eng === 'bing' ? ' selected' : ''}>bing</option>
+                    <option value="google"${eng === 'google' ? ' selected' : ''}>google</option>
+                </select>
                 <input class="inline" id="edit-geo-${row.dataset.id}" value="${row.dataset.geo}" placeholder="geo">
                 <input class="inline" id="edit-int-${row.dataset.id}" type="number" min="1" value="${row.dataset.interval}" placeholder="hours">
                 <input class="inline" id="edit-mp-${row.dataset.id}" type="number" min="1" value="${row.dataset.maxpos}" placeholder="max pos">
-                <input class="inline" id="edit-rpp-${row.dataset.id}" type="number" min="10" step="10" value="${row.dataset.rpp}" placeholder="rpp">
+                <input class="inline" id="edit-rpp-${row.dataset.id}" type="number" min="10" step="10" value="${row.dataset.rpp}" placeholder="rpp" style="grid-column: 1 / -1;">
             </div>`;
         actions.innerHTML = `
             <button class="icon-btn act-save" title="Save"><i data-lucide="check"></i></button>
@@ -367,6 +402,7 @@
         const id = row.dataset.id;
         const body = {
             term: document.getElementById(`edit-term-${id}`).value.trim(),
+            engine: document.getElementById(`edit-eng-${id}`).value,
             geo: document.getElementById(`edit-geo-${id}`).value.trim(),
             interval_hours: parseInt(document.getElementById(`edit-int-${id}`).value, 10),
             max_position: parseInt(document.getElementById(`edit-mp-${id}`).value, 10),
@@ -375,6 +411,7 @@
         try {
             const kw = await api(`/keywords/${id}`, { method: 'PATCH', body });
             row.dataset.term = kw.term;
+            row.dataset.engine = kw.engine;
             row.dataset.geo = kw.geo;
             row.dataset.interval = kw.interval_hours;
             row.dataset.maxpos = kw.max_position;
