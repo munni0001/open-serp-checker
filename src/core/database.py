@@ -80,6 +80,12 @@ class Database:
         ''')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_keyword_results_kw_ts ON keyword_results(keyword_id, timestamp DESC)')
 
+        existing_cols = {row[1] for row in cursor.execute('PRAGMA table_info(keyword_results)').fetchall()}
+        if 'status' not in existing_cols:
+            cursor.execute("ALTER TABLE keyword_results ADD COLUMN status TEXT NOT NULL DEFAULT 'ok'")
+        if 'error' not in existing_cols:
+            cursor.execute("ALTER TABLE keyword_results ADD COLUMN error TEXT")
+
         conn.commit()
         conn.close()
 
@@ -295,11 +301,12 @@ class Database:
         conn = self._connect()
         cursor = conn.cursor()
         cursor.execute('''
-            INSERT INTO keyword_results (keyword_id, timestamp, position, url, found)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO keyword_results (keyword_id, timestamp, position, url, found, status, error)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
         ''', (
             result.keyword_id, result.timestamp.isoformat(),
             result.position, result.url, 1 if result.found else 0,
+            result.status, result.error,
         ))
         result_id = cursor.lastrowid
         conn.commit()
@@ -318,6 +325,7 @@ class Database:
                 id=r[0], keyword_id=r[1],
                 timestamp=datetime.fromisoformat(r[2]),
                 position=r[3], url=r[4] or "", found=bool(r[5]),
+                status=r[6] or "ok", error=r[7],
             )
             for r in rows
         ]
@@ -340,24 +348,33 @@ class Database:
         rows = []
         for kw in keywords:
             latest = conn.execute(
-                'SELECT position, timestamp FROM keyword_results '
+                'SELECT position, timestamp, status FROM keyword_results '
+                "WHERE keyword_id = ? AND status = 'ok' ORDER BY timestamp DESC LIMIT 1",
+                (kw.id,),
+            ).fetchone()
+            latest_any = conn.execute(
+                'SELECT status, error FROM keyword_results '
                 'WHERE keyword_id = ? ORDER BY timestamp DESC LIMIT 1',
                 (kw.id,),
             ).fetchone()
             pos_1d = conn.execute(
                 'SELECT position FROM keyword_results '
-                'WHERE keyword_id = ? AND timestamp <= ? ORDER BY timestamp DESC LIMIT 1',
+                "WHERE keyword_id = ? AND status = 'ok' AND timestamp <= ? "
+                'ORDER BY timestamp DESC LIMIT 1',
                 (kw.id, cutoff_1d),
             ).fetchone()
             pos_7d = conn.execute(
                 'SELECT position FROM keyword_results '
-                'WHERE keyword_id = ? AND timestamp <= ? ORDER BY timestamp DESC LIMIT 1',
+                "WHERE keyword_id = ? AND status = 'ok' AND timestamp <= ? "
+                'ORDER BY timestamp DESC LIMIT 1',
                 (kw.id, cutoff_7d),
             ).fetchone()
             rows.append({
                 'keyword': kw.model_dump(mode='json'),
                 'latest_position': latest[0] if latest else None,
                 'latest_timestamp': latest[1] if latest else None,
+                'latest_status': latest_any[0] if latest_any else None,
+                'latest_error': latest_any[1] if latest_any else None,
                 'position_1d_ago': pos_1d[0] if pos_1d else None,
                 'position_7d_ago': pos_7d[0] if pos_7d else None,
             })

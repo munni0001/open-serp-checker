@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Literal, Optional
 from pydantic import BaseModel, Field
 from datetime import datetime
 from enum import Enum
@@ -62,3 +62,5 @@ class KeywordResult(BaseModel):
     position: Optional[int] = None
     url: Optional[str] = ""
     found: bool = False
+    status: Literal["ok", "blocked", "error"] = "ok"
+    error: Optional[str] = None

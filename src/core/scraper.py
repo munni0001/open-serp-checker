@@ -2,8 +2,11 @@ from datetime import datetime
 from typing import Optional
 from urllib.parse import quote
 
+import httpx
+
+from src.config import settings
 from src.core.database import Database
-from src.core.engines import bing
+from src.core.engines import bing, google
 from src.models import Keyword, KeywordResult, Project
 
 
@@ -31,19 +34,37 @@ class SerpScraper:
         self.timeout = timeout
 
     async def scrape_keyword(self, keyword: Keyword, project: Project, proxy=None) -> KeywordResult:
-        proxy_url = build_proxy_url(proxy)
+        proxy_url = build_proxy_url(proxy) or settings.serp_proxy_url
 
-        if keyword.engine == "bing":
-            html = await bing.fetch(
-                keyword.term,
-                geo=keyword.geo,
-                results_per_page=keyword.results_per_page,
-                proxy=proxy_url,
-                timeout=self.timeout,
-            )
-            match = bing.parse(html, project.domain or "", keyword.max_position)
-        else:
-            raise ValueError(f"Unknown engine: {keyword.engine!r}")
+        try:
+            if keyword.engine == "bing":
+                html = await bing.fetch(
+                    keyword.term,
+                    geo=keyword.geo,
+                    results_per_page=keyword.results_per_page,
+                    proxy=proxy_url,
+                    timeout=self.timeout,
+                )
+                match = bing.parse(html, project.domain or "", keyword.max_position)
+                match.setdefault("status", "ok")
+                match.setdefault("error", None)
+            elif keyword.engine == "google":
+                html, final_url = await google.fetch(
+                    keyword.term,
+                    geo=keyword.geo,
+                    results_per_page=keyword.results_per_page,
+                    proxy=proxy_url,
+                    timeout=self.timeout,
+                )
+                match = google.parse(
+                    html, project.domain or "", keyword.max_position,
+                    final_url=final_url, status_code=200,
+                )
+            else:
+                raise ValueError(f"Unknown engine: {keyword.engine!r}")
+        except httpx.HTTPError as e:
+            match = {"position": None, "url": "", "found": False,
+                     "status": "error", "error": f"{type(e).__name__}: {e}"[:200]}
 
         result = KeywordResult(
             keyword_id=keyword.id,
@@ -51,6 +72,8 @@ class SerpScraper:
             position=match["position"],
             url=match["url"],
             found=match["found"],
+            status=match["status"],
+            error=match["error"],
         )
         result.id = self.db.create_keyword_result(result)
         self.db.touch_keyword_run(keyword.id, result.timestamp)

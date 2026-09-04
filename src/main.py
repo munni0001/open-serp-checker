@@ -44,6 +44,7 @@ class ProjectPatch(BaseModel):
 
 class KeywordCreate(BaseModel):
     term: str
+    engine: Optional[str] = None
     geo: Optional[str] = None
     interval_hours: Optional[int] = None
     max_position: Optional[int] = None
@@ -52,6 +53,7 @@ class KeywordCreate(BaseModel):
 
 class KeywordBulkCreate(BaseModel):
     terms: List[str]
+    engine: Optional[str] = None
     geo: Optional[str] = None
     interval_hours: Optional[int] = None
     max_position: Optional[int] = None
@@ -60,6 +62,7 @@ class KeywordBulkCreate(BaseModel):
 
 class KeywordPatch(BaseModel):
     term: Optional[str] = None
+    engine: Optional[str] = None
     geo: Optional[str] = None
     interval_hours: Optional[int] = None
     max_position: Optional[int] = None
@@ -157,6 +160,7 @@ async def create_keyword(project_id: int, payload: KeywordCreate):
     keyword_id = keyword_manager.add_keyword(
         project,
         payload.term,
+        engine=payload.engine,
         geo=payload.geo,
         interval_hours=payload.interval_hours,
         max_position=payload.max_position,
@@ -179,6 +183,7 @@ async def create_keywords_bulk(project_id: int, payload: KeywordBulkCreate):
     for term in terms:
         kw_id = keyword_manager.add_keyword(
             project, term,
+            engine=payload.engine,
             geo=payload.geo,
             interval_hours=payload.interval_hours,
             max_position=payload.max_position,
