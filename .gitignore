@@ -35,3 +35,10 @@ test_*.py
 verify_*.py
 .pytest_cache/
 .coverage
+
+# Exception: keep the proper tests directory tracked (overrides *.md and test_*.py above)
+!tests/
+!tests/**
+# ...but keep Python caches out of tests/ too
+tests/**/__pycache__/
+tests/**/*.py[cod]
