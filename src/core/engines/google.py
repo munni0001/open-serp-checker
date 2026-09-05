@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import re
 from typing import Callable, Dict, List, Optional, Tuple
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 from bs4 import BeautifulSoup
 
@@ -243,9 +243,9 @@ def _proxy_url_to_dict(proxy: Optional[str]) -> Optional[dict]:
     p = urlparse(proxy)
     d = {"server": f"{p.scheme}://{p.hostname}:{p.port}"}
     if p.username:
-        d["username"] = p.username
+        d["username"] = unquote(p.username)
     if p.password:
-        d["password"] = p.password
+        d["password"] = unquote(p.password)
     return d
 
 

@@ -67,7 +67,7 @@ def build_proxy_url(proxy) -> Optional[str]:
 class SerpScraper:
     """Dispatches a keyword scrape to the right engine module."""
 
-    def __init__(self, db: Database, timeout: float = 20.0):
+    def __init__(self, db: Database, timeout: float = 45.0):
         self.db = db
         self.timeout = timeout
 
