@@ -1,3 +1,4 @@
+import asyncio
 import time
 from typing import List, Optional
 
@@ -338,6 +339,30 @@ async def delete_keyword(keyword_id: int):
     if not db.delete_keyword(keyword_id):
         raise HTTPException(status_code=404, detail="Keyword not found")
     return {"deleted": keyword_id}
+
+
+@app.post("/projects/{project_id}/run-all")
+async def run_all_project_keywords(project_id: int, background: BackgroundTasks):
+    if not db.get_project(project_id):
+        raise HTTPException(status_code=404, detail="Project not found")
+    keywords = db.get_keywords_for_project(project_id)
+    if not keywords:
+        raise HTTPException(status_code=400, detail="Project has no keywords")
+
+    sem = asyncio.Semaphore(3)
+
+    async def _run_one(kw_id: int):
+        async with sem:
+            try:
+                await keyword_manager.run_keyword(kw_id)
+            except Exception:
+                pass
+
+    async def _run_all():
+        await asyncio.gather(*(_run_one(kw.id) for kw in keywords))
+
+    background.add_task(_run_all)
+    return {"project_id": project_id, "queued": len(keywords), "concurrency": 3}
 
 
 @app.post("/keywords/{keyword_id}/run")

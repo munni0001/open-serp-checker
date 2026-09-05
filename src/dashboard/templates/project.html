@@ -68,7 +68,10 @@
 <div class="card">
     <div class="card-head">
         <h2><i data-lucide="list"></i> Keywords <span class="badge-count" id="kwCount">{{ keyword_rows|length }}</span></h2>
-        <button class="btn btn-ghost btn-sm" id="toggleAddKw" type="button"><i data-lucide="plus"></i> Add keywords</button>
+        <div style="display: flex; gap: 8px;">
+            <button class="btn btn-ghost btn-sm" id="runAllBtn" type="button" {% if not keyword_rows %}disabled{% endif %}><i data-lucide="play"></i> Run all now</button>
+            <button class="btn btn-ghost btn-sm" id="toggleAddKw" type="button"><i data-lucide="plus"></i> Add keywords</button>
+        </div>
     </div>
 
     <div class="collapse hidden" id="addKwPanel">
@@ -227,6 +230,23 @@
             await api(`/projects/${PROJECT_ID}`, { method: 'DELETE' });
             window.location.href = '/';
         } catch (err) { toast(err.message, 'error'); }
+    });
+
+    // ---------- Run all ----------
+    document.getElementById('runAllBtn').addEventListener('click', async () => {
+        const btn = document.getElementById('runAllBtn');
+        const count = document.querySelectorAll('#kwBody tr.kw-row').length;
+        if (!count) return;
+        if (!confirm(`Queue all ${count} keywords to run now? They'll process 3 at a time in the background.`)) return;
+        btn.disabled = true;
+        try {
+            const res = await api(`/projects/${PROJECT_ID}/run-all`, { method: 'POST' });
+            toast(`Queued ${res.queued} keywords · reload in a bit to see results`, 'success');
+        } catch (err) {
+            toast(err.message, 'error');
+        } finally {
+            setTimeout(() => { btn.disabled = false; }, 3000);
+        }
     });
 
     // ---------- Add keywords (bulk) ----------
