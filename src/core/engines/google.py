@@ -1,23 +1,26 @@
-"""Google SERP engine: pure fetch + parse.
+"""Google SERP engine: Playwright fetch + pure parse.
 
-`fetch` is network-only; `parse` is pure and testable with an HTML fixture.
+`fetch` drives a headless Chromium via Playwright — pure HTTP clients cannot
+beat Google's JS-challenge (`/httpservice/retry/enablejs`) regardless of TLS
+or header fingerprint. See sessions/SESSION_2_7_1_google_bot_signals.md
+and the probes under scripts/probes/ for the evidence.
 
-Design notes (see sessions/SESSION_2_7_google_engine.md):
+`parse` remains pure and fixture-testable.
+
+Design notes:
 - Anchor on <h3>. Position = DOM order of h3s in the main results container.
 - <cite> holds the display domain (source of truth); hrefs are usually opaque
   /goto?url=CAES... wrappers we cannot decode without following them.
 - Full clickable URL: scan the whole HTML for plaintext external URLs and
-  match by netloc against the cite domain. Robust to Google's next class-name
-  rename because it doesn't depend on DOM classes.
+  match by netloc against the cite domain.
 - Block detection is first-class. A blocked run must not corrupt rank history.
 """
 from __future__ import annotations
 
 import re
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
-import httpx
 from bs4 import BeautifulSoup
 
 DEFAULT_USER_AGENT = (
@@ -203,36 +206,166 @@ def parse(html: str, domain: str, max_position: int,
             "status": "ok", "error": None}
 
 
+# ---------- Playwright fetch ----------
+
+# Patches the Playwright/CDP fingerprint tells Google captures on. Kept minimal:
+# every prop here fires on a real Chrome page. Adding more risks false-positives.
+_STEALTH_INIT_JS = """
+Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+window.chrome = window.chrome || { runtime: {} };
+const origQuery = window.navigator.permissions && window.navigator.permissions.query;
+if (origQuery) {
+  window.navigator.permissions.query = (p) => (
+    p && p.name === 'notifications'
+      ? Promise.resolve({ state: Notification.permission })
+      : origQuery(p)
+  );
+}
+Object.defineProperty(navigator, 'plugins', { get: () => [1,2,3,4,5] });
+Object.defineProperty(navigator, 'languages', { get: () => ['en-US','en'] });
+"""
+
+_STEALTH_ARGS = [
+    "--disable-blink-features=AutomationControlled",
+    "--disable-features=IsolateOrigins,site-per-process",
+    "--no-default-browser-check",
+    "--no-first-run",
+]
+
+# Blocking stylesheets triggers a /sorry/ redirect. Blocking these is safe.
+_BLOCKED_RESOURCE_TYPES = {"image", "media", "font"}
+
+
+def _proxy_url_to_dict(proxy: Optional[str]) -> Optional[dict]:
+    """Convert 'http://user:pass@host:port' → Playwright proxy dict."""
+    if not proxy:
+        return None
+    p = urlparse(proxy)
+    d = {"server": f"{p.scheme}://{p.hostname}:{p.port}"}
+    if p.username:
+        d["username"] = p.username
+    if p.password:
+        d["password"] = p.password
+    return d
+
+
+async def _open_context_with_ip(browser, proxy_dict, geo, language, page_timeout_ms,
+                                capture_exit_ip: bool):
+    """Open a stealth+resource-blocked browser context. If capture_exit_ip,
+    also hit ipify to learn the assigned exit IP. Returns (context, exit_ip_or_none).
+    """
+    context = await browser.new_context(
+        proxy=proxy_dict,
+        locale=f"{language}-{geo.upper()}",
+        viewport={"width": 1280, "height": 800},
+        user_agent=DEFAULT_USER_AGENT,
+    )
+    await context.add_init_script(_STEALTH_INIT_JS)
+
+    async def _route(route):
+        if route.request.resource_type in _BLOCKED_RESOURCE_TYPES:
+            await route.abort()
+        else:
+            await route.continue_()
+    await context.route("**/*", _route)
+
+    exit_ip: Optional[str] = None
+    if capture_exit_ip:
+        page = await context.new_page()
+        try:
+            r = await page.goto("https://api.ipify.org?format=json",
+                                wait_until="domcontentloaded", timeout=page_timeout_ms)
+            if r and r.status == 200:
+                body = await page.content()
+                m = re.search(r'"ip"\s*:\s*"([^"]+)"', body)
+                if m:
+                    exit_ip = m.group(1)
+        except Exception:
+            pass
+        finally:
+            await page.close()
+    return context, exit_ip
+
+
 async def fetch(
     query: str,
     geo: str = "us",
-    results_per_page: int = 100,
+    results_per_page: int = 10,
     language: str = "en",
     proxy: Optional[str] = None,
-    timeout: float = 20.0,
-) -> Tuple[str, str]:
-    """Fetch a Google SERP. Returns (html, final_url).
+    timeout: float = 30.0,
+    capture_exit_ip: bool = False,
+    blocklist_check: Optional[Callable[[str], bool]] = None,
+    max_ip_retries: int = 1,
+) -> Tuple[str, str, Optional[str]]:
+    """Fetch a Google SERP via Playwright. Returns (html, final_url, exit_ip).
 
-    `pws=0` disables personalization. `num=100` gets up to 100 results in one
-    request. Consent cookie bypasses the EU interstitial for scrapers.
+    Google gates /search behind a JS challenge that no pure-HTTP client can pass.
+    This drives a stealth-patched headless Chromium to execute the challenge
+    and return the rendered SERP.
+
+    Warms the context by hitting the homepage first — Google captchas cold
+    browser sessions on ~1 in 5 first-search requests otherwise.
+
+    IP blocklist support (all optional, opt-in per caller):
+    - `capture_exit_ip=True` hits ipify at context start to learn the exit IP.
+      Adds ~200 bytes + ~500ms per fetch. Off by default so users who don't
+      want the feature don't pay the bandwidth cost.
+    - `blocklist_check(ip) -> bool` — if provided, called with the captured IP;
+      returning True means "this IP is known-bad, get me a new one." The context
+      is closed and a fresh one opened, up to `max_ip_retries` times.
+    - Returned `exit_ip` is the IP we actually used for the search (may be None
+      if capture_exit_ip=False or ipify failed).
+
+    `results_per_page` is accepted for signature stability but ignored —
+    Google returns ~10/page now that `num` is dead; pagination is separate.
     """
-    params = {
-        "q": query,
-        "num": max(10, min(results_per_page, 100)),
-        "hl": language,
-        "gl": geo.lower(),
-        "pws": 0,
-    }
-    headers = {
-        "User-Agent": DEFAULT_USER_AGENT,
-        "Accept-Language": f"{language}-{geo.upper()},{language};q=0.9",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Cookie": CONSENT_COOKIE,
-    }
-    async with httpx.AsyncClient(
-        timeout=timeout, follow_redirects=True, proxy=proxy, headers=headers,
-    ) as client:
-        resp = await client.get(SEARCH_URL, params=params)
-        # Do not raise_for_status: block detection needs to see the actual
-        # response body/URL even on 429 or 3xx-to-sorry.
-        return resp.text, str(resp.url)
+    from playwright.async_api import async_playwright
+
+    proxy_dict = _proxy_url_to_dict(proxy)
+    timeout_ms = int(timeout * 1000)
+
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True, args=_STEALTH_ARGS)
+        context = None
+        exit_ip: Optional[str] = None
+        try:
+            attempts = 0
+            max_attempts = max(1, max_ip_retries + 1) if (capture_exit_ip and blocklist_check) else 1
+            while attempts < max_attempts:
+                context, exit_ip = await _open_context_with_ip(
+                    browser, proxy_dict, geo, language, timeout_ms, capture_exit_ip,
+                )
+                if not (capture_exit_ip and blocklist_check and exit_ip):
+                    break
+                if not blocklist_check(exit_ip):
+                    break
+                # IP is known-bad; drop this context and try for a fresh one.
+                await context.close()
+                context = None
+                attempts += 1
+
+            if context is None:
+                # Every attempt got a blocked IP. Open one final context and
+                # scrape anyway — better a probably-blocked attempt than nothing.
+                context, exit_ip = await _open_context_with_ip(
+                    browser, proxy_dict, geo, language, timeout_ms, capture_exit_ip,
+                )
+
+            page = await context.new_page()
+            await page.goto("https://www.google.com/", wait_until="domcontentloaded",
+                            timeout=timeout_ms)
+
+            search_url = f"{SEARCH_URL}?q={query.replace(' ', '+')}"
+            resp = await page.goto(search_url, wait_until="domcontentloaded",
+                                   timeout=timeout_ms)
+            try:
+                await page.wait_for_selector("h3", timeout=5_000)
+            except Exception:
+                pass
+
+            html = await page.content()
+            final_url = page.url
+            return html, final_url, exit_ip
+        finally:
+            await browser.close()
