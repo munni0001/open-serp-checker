@@ -96,6 +96,38 @@ class Database:
         if 'proxy_id' not in kw_cols:
             cursor.execute("ALTER TABLE keywords ADD COLUMN proxy_id INTEGER REFERENCES proxies(id) ON DELETE SET NULL")
 
+        # Proxy mode + IP blocklist columns.
+        proxy_cols = {row[1] for row in cursor.execute('PRAGMA table_info(proxies)').fetchall()}
+        if 'mode' not in proxy_cols:
+            cursor.execute("ALTER TABLE proxies ADD COLUMN mode TEXT NOT NULL DEFAULT 'rotating'")
+        if 'sticky_duration_min' not in proxy_cols:
+            cursor.execute("ALTER TABLE proxies ADD COLUMN sticky_duration_min INTEGER")
+        if 'sticky_sessions' not in proxy_cols:
+            cursor.execute("ALTER TABLE proxies ADD COLUMN sticky_sessions INTEGER NOT NULL DEFAULT 1")
+        if 'ip_blocklist_enabled' not in proxy_cols:
+            cursor.execute("ALTER TABLE proxies ADD COLUMN ip_blocklist_enabled INTEGER NOT NULL DEFAULT 0")
+        if 'ip_blocklist_ttl_days' not in proxy_cols:
+            cursor.execute("ALTER TABLE proxies ADD COLUMN ip_blocklist_ttl_days INTEGER NOT NULL DEFAULT 1")
+
+        # IP outcome log — per proxy per exit IP, used by the blocklist retry logic
+        # and by long-term reputation stats. Rows older than the proxy's TTL are purged.
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS proxy_ip_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                proxy_id INTEGER NOT NULL,
+                exit_ip TEXT NOT NULL,
+                seen_at TEXT NOT NULL,
+                was_blocked INTEGER NOT NULL DEFAULT 0,
+                block_reason TEXT,
+                engine TEXT,
+                FOREIGN KEY (proxy_id) REFERENCES proxies (id) ON DELETE CASCADE
+            )
+        ''')
+        cursor.execute(
+            'CREATE INDEX IF NOT EXISTS idx_proxy_ip_log_lookup '
+            'ON proxy_ip_log(proxy_id, exit_ip, seen_at DESC)'
+        )
+
         conn.commit()
         conn.close()
 
@@ -188,15 +220,39 @@ class Database:
 
     # ---------- Proxies ----------
 
+    def _row_to_proxy(self, row) -> Proxy:
+        # Columns after schema migration: id, name, type, provider, username, password,
+        # host, port, created_at, updated_at, mode, sticky_duration_min,
+        # sticky_sessions, ip_blocklist_enabled, ip_blocklist_ttl_days
+        d = dict(row)
+        return Proxy(
+            id=d['id'], name=d['name'], type=d['type'], provider=d['provider'],
+            username=d.get('username'), password=d.get('password'),
+            host=d.get('host'), port=d.get('port'),
+            mode=d.get('mode') or 'rotating',
+            sticky_duration_min=d.get('sticky_duration_min'),
+            sticky_sessions=d.get('sticky_sessions') or 1,
+            ip_blocklist_enabled=bool(d.get('ip_blocklist_enabled') or 0),
+            ip_blocklist_ttl_days=d.get('ip_blocklist_ttl_days') or 1,
+            created_at=datetime.fromisoformat(d['created_at']),
+            updated_at=datetime.fromisoformat(d['updated_at']),
+        )
+
     def create_proxy(self, proxy: Proxy) -> int:
         conn = self._connect()
         cursor = conn.cursor()
         cursor.execute('''
-            INSERT INTO proxies (name, type, provider, username, password, host, port, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO proxies (name, type, provider, username, password, host, port,
+                mode, sticky_duration_min, sticky_sessions,
+                ip_blocklist_enabled, ip_blocklist_ttl_days,
+                created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             proxy.name, proxy.type, proxy.provider, proxy.username, proxy.password,
-            proxy.host, proxy.port, proxy.created_at.isoformat(), proxy.updated_at.isoformat(),
+            proxy.host, proxy.port,
+            proxy.mode, proxy.sticky_duration_min, proxy.sticky_sessions,
+            1 if proxy.ip_blocklist_enabled else 0, proxy.ip_blocklist_ttl_days,
+            proxy.created_at.isoformat(), proxy.updated_at.isoformat(),
         ))
         proxy_id = cursor.lastrowid
         conn.commit()
@@ -205,36 +261,31 @@ class Database:
 
     def get_proxy(self, proxy_id: int) -> Optional[Proxy]:
         conn = self._connect()
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM proxies WHERE id = ?', (proxy_id,))
-        row = cursor.fetchone()
+        conn.row_factory = sqlite3.Row
+        row = conn.execute('SELECT * FROM proxies WHERE id = ?', (proxy_id,)).fetchone()
         conn.close()
-        if not row:
-            return None
-        return Proxy(
-            id=row[0], name=row[1], type=row[2], provider=row[3],
-            username=row[4], password=row[5], host=row[6], port=row[7],
-            created_at=datetime.fromisoformat(row[8]),
-            updated_at=datetime.fromisoformat(row[9]),
-        )
+        return self._row_to_proxy(row) if row else None
 
     def get_all_proxies(self) -> List[Proxy]:
         conn = self._connect()
+        conn.row_factory = sqlite3.Row
         rows = conn.execute('SELECT * FROM proxies ORDER BY id ASC').fetchall()
         conn.close()
-        return [
-            Proxy(
-                id=r[0], name=r[1], type=r[2], provider=r[3],
-                username=r[4], password=r[5], host=r[6], port=r[7],
-                created_at=datetime.fromisoformat(r[8]),
-                updated_at=datetime.fromisoformat(r[9]),
-            )
-            for r in rows
-        ]
+        return [self._row_to_proxy(r) for r in rows]
 
     def update_proxy(self, proxy_id: int, **fields) -> None:
-        allowed = {'name', 'type', 'provider', 'username', 'password', 'host', 'port'}
-        updates = {k: v for k, v in fields.items() if k in allowed and v is not None}
+        allowed = {
+            'name', 'type', 'provider', 'username', 'password', 'host', 'port',
+            'mode', 'sticky_duration_min', 'sticky_sessions',
+            'ip_blocklist_enabled', 'ip_blocklist_ttl_days',
+        }
+        nullable = {'sticky_duration_min'}
+        updates = {
+            k: v for k, v in fields.items()
+            if k in allowed and (v is not None or k in nullable)
+        }
+        if 'ip_blocklist_enabled' in updates and not isinstance(updates['ip_blocklist_enabled'], int):
+            updates['ip_blocklist_enabled'] = 1 if updates['ip_blocklist_enabled'] else 0
         if not updates:
             return
         updates['updated_at'] = datetime.utcnow().isoformat()
@@ -243,6 +294,43 @@ class Database:
         conn.execute(f'UPDATE proxies SET {cols} WHERE id=?', (*updates.values(), proxy_id))
         conn.commit()
         conn.close()
+
+    # ---------- Proxy IP log (blocklist + reputation) ----------
+
+    def log_proxy_ip(self, proxy_id: int, exit_ip: str,
+                     was_blocked: bool = False, block_reason: Optional[str] = None,
+                     engine: Optional[str] = None) -> None:
+        conn = self._connect()
+        conn.execute(
+            'INSERT INTO proxy_ip_log (proxy_id, exit_ip, seen_at, was_blocked, block_reason, engine) '
+            'VALUES (?, ?, ?, ?, ?, ?)',
+            (proxy_id, exit_ip, datetime.utcnow().isoformat(),
+             1 if was_blocked else 0, block_reason, engine),
+        )
+        conn.commit()
+        conn.close()
+
+    def is_ip_blocklisted(self, proxy_id: int, exit_ip: str, ttl_days: int) -> bool:
+        """True if this proxy has recorded a block for `exit_ip` within the TTL window."""
+        cutoff = (datetime.utcnow() - timedelta(days=ttl_days)).isoformat()
+        conn = self._connect()
+        row = conn.execute(
+            'SELECT 1 FROM proxy_ip_log '
+            'WHERE proxy_id = ? AND exit_ip = ? AND was_blocked = 1 AND seen_at > ? LIMIT 1',
+            (proxy_id, exit_ip, cutoff),
+        ).fetchone()
+        conn.close()
+        return row is not None
+
+    def purge_old_proxy_ip_logs(self, ttl_days: int) -> int:
+        """Delete IP log rows older than ttl_days. Returns rows deleted."""
+        cutoff = (datetime.utcnow() - timedelta(days=ttl_days)).isoformat()
+        conn = self._connect()
+        cursor = conn.execute('DELETE FROM proxy_ip_log WHERE seen_at <= ?', (cutoff,))
+        conn.commit()
+        deleted = cursor.rowcount
+        conn.close()
+        return deleted
 
     def delete_proxy(self, proxy_id: int) -> bool:
         conn = self._connect()

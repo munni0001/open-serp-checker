@@ -84,6 +84,11 @@ class ProxyCreate(BaseModel):
     port: int = 0
     username: str = ""
     password: str = ""
+    mode: str = "rotating"
+    sticky_duration_min: Optional[int] = None
+    sticky_sessions: int = 1
+    ip_blocklist_enabled: bool = False
+    ip_blocklist_ttl_days: int = 1
 
 
 class ProxyPatch(BaseModel):
@@ -94,6 +99,11 @@ class ProxyPatch(BaseModel):
     port: Optional[int] = None
     username: Optional[str] = None
     password: Optional[str] = None
+    mode: Optional[str] = None
+    sticky_duration_min: Optional[int] = None
+    sticky_sessions: Optional[int] = None
+    ip_blocklist_enabled: Optional[bool] = None
+    ip_blocklist_ttl_days: Optional[int] = None
 
 
 # ---------- Pages ----------

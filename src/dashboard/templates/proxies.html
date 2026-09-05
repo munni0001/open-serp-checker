@@ -49,6 +49,48 @@
                     <label for="fPassword">Password</label>
                     <input id="fPassword" type="password" autocomplete="new-password" placeholder="Optional">
                 </div>
+
+                <div class="field" style="grid-column: 1 / -1;">
+                    <hr style="border:none; border-top:1px solid #333; margin: 6px 0;">
+                    <div style="font-size: 12px; color: #888; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px;">Session behaviour</div>
+                </div>
+                <div class="field">
+                    <label for="fMode">Mode</label>
+                    <select id="fMode">
+                        <option value="rotating">Rotating (new IP per request)</option>
+                        <option value="sticky">Sticky (same IP per session)</option>
+                    </select>
+                </div>
+                <div class="field sticky-only hidden">
+                    <label for="fStickyDuration">Sticky duration</label>
+                    <select id="fStickyDuration">
+                        <option value="1">1 minute</option>
+                        <option value="10">10 minutes</option>
+                        <option value="20">20 minutes</option>
+                        <option value="30">30 minutes</option>
+                        <option value="60">1 hour</option>
+                    </select>
+                </div>
+                <div class="field sticky-only hidden">
+                    <label for="fStickySessions">Concurrent sticky sessions</label>
+                    <input id="fStickySessions" type="number" min="1" max="10" value="1">
+                </div>
+
+                <div class="field" style="grid-column: 1 / -1;">
+                    <hr style="border:none; border-top:1px solid #333; margin: 6px 0;">
+                    <div style="font-size: 12px; color: #888; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px;">Cost controls</div>
+                </div>
+                <div class="field" style="grid-column: 1 / -1;">
+                    <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                        <input id="fBlocklistEnabled" type="checkbox">
+                        <span>Skip known-bad exit IPs (adds ~200 B/request to log the IP; saves ~500 KB/request when we skip a failure)</span>
+                    </label>
+                </div>
+                <div class="field blocklist-only hidden">
+                    <label for="fBlocklistTtl">Blocklist retention (days)</label>
+                    <input id="fBlocklistTtl" type="number" min="1" max="30" value="1">
+                    <div style="font-size:11px; color:#888; margin-top:4px;">Residential IPs churn fast — 1 day is a sane default. Longer values will bias against IPs that have already changed hands.</div>
+                </div>
             </div>
             <div style="display: flex; gap: 8px; margin-top: 18px;">
                 <button class="btn btn-primary" type="submit" id="submitBtn"><i data-lucide="check"></i> <span id="submitLabel">Create</span></button>
@@ -113,12 +155,27 @@
     const fields = ['Name', 'Provider', 'Type', 'Host', 'Port', 'Username', 'Password'];
     const $ = (id) => document.getElementById(id);
 
+    function syncSectionVisibility() {
+        const isSticky = $('fMode').value === 'sticky';
+        document.querySelectorAll('.sticky-only').forEach(el =>
+            el.classList.toggle('hidden', !isSticky));
+        const blockOn = $('fBlocklistEnabled').checked;
+        document.querySelectorAll('.blocklist-only').forEach(el =>
+            el.classList.toggle('hidden', !blockOn));
+    }
+
     function openAdd() {
         $('fId').value = '';
         fields.forEach(f => { $(`f${f}`).value = ''; });
         $('fType').value = 'paid';
         $('fProvider').value = 'manual';
+        $('fMode').value = 'rotating';
+        $('fStickyDuration').value = '1';
+        $('fStickySessions').value = '1';
+        $('fBlocklistEnabled').checked = false;
+        $('fBlocklistTtl').value = '1';
         submitLabel.textContent = 'Create';
+        syncSectionVisibility();
         panel.classList.remove('hidden');
         $('fName').focus();
     }
@@ -133,7 +190,13 @@
         $('fPort').value = p.port || '';
         $('fUsername').value = p.username || '';
         $('fPassword').value = p.password || '';
+        $('fMode').value = p.mode || 'rotating';
+        $('fStickyDuration').value = String(p.sticky_duration_min || 1);
+        $('fStickySessions').value = String(p.sticky_sessions || 1);
+        $('fBlocklistEnabled').checked = !!p.ip_blocklist_enabled;
+        $('fBlocklistTtl').value = String(p.ip_blocklist_ttl_days || 1);
         submitLabel.textContent = 'Save';
+        syncSectionVisibility();
         panel.classList.remove('hidden');
         $('fName').focus();
     }
@@ -144,10 +207,13 @@
         else closePanel();
     });
     $('cancelAdd').addEventListener('click', closePanel);
+    $('fMode').addEventListener('change', syncSectionVisibility);
+    $('fBlocklistEnabled').addEventListener('change', syncSectionVisibility);
 
     form.addEventListener('submit', async (e) => {
         e.preventDefault();
         const id = $('fId').value;
+        const mode = $('fMode').value;
         const body = {
             name: $('fName').value.trim(),
             provider: $('fProvider').value,
@@ -156,6 +222,11 @@
             port: parseInt($('fPort').value, 10) || 0,
             username: $('fUsername').value,
             password: $('fPassword').value,
+            mode: mode,
+            sticky_duration_min: mode === 'sticky' ? parseInt($('fStickyDuration').value, 10) : null,
+            sticky_sessions: mode === 'sticky' ? (parseInt($('fStickySessions').value, 10) || 1) : 1,
+            ip_blocklist_enabled: $('fBlocklistEnabled').checked,
+            ip_blocklist_ttl_days: parseInt($('fBlocklistTtl').value, 10) || 1,
         };
         if (!body.name) { toast('Name is required', 'error'); return; }
         try {

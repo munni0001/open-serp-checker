@@ -33,6 +33,9 @@ class Project(BaseModel):
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+ProxyMode = Literal["rotating", "sticky"]
+
+
 class Proxy(BaseModel):
     id: Optional[int] = None
     name: str
@@ -42,6 +45,11 @@ class Proxy(BaseModel):
     password: Optional[str] = ""
     host: Optional[str] = ""
     port: Optional[int] = 0
+    mode: ProxyMode = "rotating"
+    sticky_duration_min: Optional[int] = None
+    sticky_sessions: int = 1
+    ip_blocklist_enabled: bool = False
+    ip_blocklist_ttl_days: int = 1
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
