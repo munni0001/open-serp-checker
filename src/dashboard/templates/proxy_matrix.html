@@ -1,0 +1,131 @@
+{% extends "_base.html" %}
+{% block title %}Matrix {{ matrix_run_id }} · serp-scrape{% endblock %}
+
+{% block head_extra %}
+{% if any_running %}
+<meta http-equiv="refresh" content="30">
+{% endif %}
+{% endblock %}
+
+{% block body %}
+<div class="page-head">
+    <div>
+        <h1 class="page-title">Matrix run · {{ matrix_run_id }}</h1>
+        <p class="page-sub" style="margin:0;">
+            <span class="cell-config">{{ providers|length }} provider(s){% if any_running %} · <strong>running</strong> — page auto-refreshes every 30s{% else %} · complete{% endif %}</span>
+            <a href="/proxies" style="margin-left:12px; color: var(--text-dim);">&larr; back to proxies</a>
+        </p>
+    </div>
+    <div>
+        <a class="btn btn-ghost" href="/proxies/matrix/{{ matrix_run_id }}"><i data-lucide="refresh-cw"></i> Refresh</a>
+    </div>
+</div>
+
+{% if baseline %}
+{% set b = baseline.summary or {} %}
+{% if baseline.status == 'done' and b.baseline_ok %}
+    {% set bg = '#0a3d1a' %}{% set fg = '#7bd68f' %}{% set label = 'Baseline OK' %}
+{% elif baseline.status == 'done' %}
+    {% set bg = '#3d0a0a' %}{% set fg = '#e88a8a' %}{% set label = 'Baseline degraded — matrix aborted, no providers ran' %}
+{% elif baseline.status == 'error' %}
+    {% set bg = '#3d0a0a' %}{% set fg = '#e88a8a' %}{% set label = 'Baseline errored — matrix aborted' %}
+{% else %}
+    {% set bg = '#3d2f0a' %}{% set fg = '#e8c56a' %}{% set label = 'Baseline pending' %}
+{% endif %}
+<div style="background: {{ bg }}; color: {{ fg }}; padding: 12px 16px; border-radius: 6px; margin-bottom: 16px; font-family: var(--font-mono); font-size: 13px;">
+    <strong>{{ label }}</strong>
+    {% if b.raw_pass is not none %}
+        · {{ b.raw_pass }}/{{ b.n_keywords }} keywords passed (need ≥ {{ b.pass_threshold }})
+    {% endif %}
+    {% if b.exit_country %}· home: {{ b.exit_country }}{% endif %}
+    {% if b.top_blocked_reason %}· top block: {{ b.top_blocked_reason }}{% endif %}
+    · <a href="/proxies/local_baseline/{{ baseline.id }}" style="color: inherit; text-decoration: underline;">details</a>
+</div>
+{% endif %}
+
+<div class="card">
+    {% if not providers %}
+    <div class="empty-state">
+        <i data-lucide="hourglass"></i>
+        <div class="title">No runs yet for this matrix</div>
+        <div class="sub">Rows appear as the background task inserts them. Refresh in a few seconds.</div>
+    </div>
+    {% else %}
+    <div style="overflow-x: auto;">
+    <table>
+        <thead>
+            <tr>
+                <th>Provider</th>
+                <th>Handshake</th>
+                <th>Cold pass</th>
+                <th>Cold retry</th>
+                <th>Cold KB/succ</th>
+                <th>Cold geo%</th>
+                <th>Cache pass</th>
+                <th>Cache KB/q</th>
+                <th>Cache geo%</th>
+                <th>Cookie pass</th>
+                <th>Cookie KB/q</th>
+                <th>Cookie geo%</th>
+                <th>Sticky pass</th>
+                <th>Sticky KB/q</th>
+                <th>Sticky hold%</th>
+                <th>Sticky geo%</th>
+                <th>Status</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for prov in providers %}
+            {% set slot = {} %}
+            {% for s in prov.slots %}{% set _ = slot.update({(s.test_name, s.preset): s}) %}{% endfor %}
+            {% set hs = slot[('handshake', none)] %}
+            {% set cold = slot[('pass_rate', 'cold')] %}
+            {% set cache = slot[('warm', 'cache_only')] %}
+            {% set cookie = slot[('warm', 'cookie_only')] %}
+            {% set sticky = slot[('warm', 'sticky_warm')] %}
+            <tr>
+                <td>
+                    <a href="/proxies/{{ prov.provider_id }}/tests"
+                       style="font-weight:500;">{{ prov.name }}</a>
+                    {% if prov.provisioning_notes %}
+                    <span class="cell-config" title="{{ prov.provisioning_notes }}" style="display:block; max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+                        {{ prov.provisioning_notes }}
+                    </span>
+                    {% endif %}
+                </td>
+                <td class="cell-config">
+                    {% if hs and hs.status == 'done' %}
+                        {{ hs.summary.verdict or '—' }}<br>
+                        <span style="color:var(--text-dim);">{{ hs.summary.unique_exit_ips or 0 }} ips</span>
+                    {% elif hs %}{{ hs.status }}{% else %}—{% endif %}
+                </td>
+                {# Cold #}
+                <td class="cell-config">{% if cold and cold.status == 'done' %}{{ '%.0f%%' % ((cold.summary.raw_pass_rate or 0) * 100) }}{% elif cold %}{{ cold.status }}{% else %}—{% endif %}</td>
+                <td class="cell-config">{% if cold and cold.status == 'done' %}{{ '%.0f%%' % ((cold.summary.retry_converted_pass_rate or 0) * 100) }}{% else %}—{% endif %}</td>
+                <td class="cell-config">{% if cold and cold.status == 'done' and cold.summary.effective_kb_per_success is not none %}{{ '%.0f' % cold.summary.effective_kb_per_success }} KB{% else %}—{% endif %}</td>
+                <td class="cell-config">{% if cold and cold.status == 'done' and cold.summary.geo_honesty_pct is not none %}{{ '%.0f%%' % (cold.summary.geo_honesty_pct * 100) }}{% else %}—{% endif %}</td>
+                {# Cache #}
+                <td class="cell-config">{% if cache and cache.status == 'done' %}{{ '%.0f%%' % ((cache.summary.raw_pass_rate or 0) * 100) }}{% elif cache %}{{ cache.status }}{% else %}—{% endif %}</td>
+                <td class="cell-config">{% if cache and cache.status == 'done' and cache.summary.subsequent_avg_kb is not none %}{{ '%.0f' % cache.summary.subsequent_avg_kb }} KB{% else %}—{% endif %}</td>
+                <td class="cell-config">{% if cache and cache.status == 'done' and cache.summary.geo_honesty_pct is not none %}{{ '%.0f%%' % (cache.summary.geo_honesty_pct * 100) }}{% else %}—{% endif %}</td>
+                {# Cookie #}
+                <td class="cell-config">{% if cookie and cookie.status == 'done' %}{{ '%.0f%%' % ((cookie.summary.raw_pass_rate or 0) * 100) }}{% elif cookie %}{{ cookie.status }}{% else %}—{% endif %}</td>
+                <td class="cell-config">{% if cookie and cookie.status == 'done' and cookie.summary.subsequent_avg_kb is not none %}{{ '%.0f' % cookie.summary.subsequent_avg_kb }} KB{% else %}—{% endif %}</td>
+                <td class="cell-config">{% if cookie and cookie.status == 'done' and cookie.summary.geo_honesty_pct is not none %}{{ '%.0f%%' % (cookie.summary.geo_honesty_pct * 100) }}{% else %}—{% endif %}</td>
+                {# Sticky #}
+                <td class="cell-config">{% if sticky and sticky.status == 'done' %}{{ '%.0f%%' % ((sticky.summary.raw_pass_rate or 0) * 100) }}{% elif sticky %}{{ sticky.status }}{% else %}—{% endif %}</td>
+                <td class="cell-config">{% if sticky and sticky.status == 'done' and sticky.summary.subsequent_avg_kb is not none %}{{ '%.0f' % sticky.summary.subsequent_avg_kb }} KB{% else %}—{% endif %}</td>
+                <td class="cell-config">{% if sticky and sticky.status == 'done' and sticky.summary.sticky_ip_held_pct is not none %}{{ '%.0f%%' % (sticky.summary.sticky_ip_held_pct * 100) }}{% else %}—{% endif %}</td>
+                <td class="cell-config">{% if sticky and sticky.status == 'done' and sticky.summary.geo_honesty_pct is not none %}{{ '%.0f%%' % (sticky.summary.geo_honesty_pct * 100) }}{% else %}—{% endif %}</td>
+                <td class="cell-config">
+                    {{ prov.done_ct }}/{{ prov.total }} done
+                    {% if prov.errors %}<br><span style="color:#e11;">errors: {{ prov.errors|length }}</span>{% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

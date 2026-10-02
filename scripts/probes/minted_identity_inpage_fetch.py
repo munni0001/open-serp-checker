@@ -98,6 +98,8 @@ class QueryResult:
     latency_ms: int
     body_bytes: int
     ip: Optional[str] = None
+    wire_bytes: int = 0
+    request_count: int = 0
     error: Optional[str] = None
 
 
@@ -148,6 +150,32 @@ async def _exit_ip(page) -> Optional[str]:
         return None
 
 
+def _attach_wire_listener(page, records):
+    """Per-request wire-byte accounting via Playwright request.sizes().
+
+    request.sizes() returns {requestBodySize, requestHeadersSize,
+    responseBodySize, responseHeadersSize} in WIRE bytes (post-compression),
+    so this is what the proxy actually bills — unlike the decompressed body.
+    In-page fetch() requests fire normal Playwright request events, so the
+    parked page's /search fetches land here.
+    """
+
+    async def on_finished(request):
+        try:
+            resp = await request.response()
+            status = resp.status if resp else None
+            sizes = await request.sizes()
+            wire = (
+                (sizes.get("responseBodySize") or 0)
+                + (sizes.get("responseHeadersSize") or 0)
+            )
+            records.append((request.url, status, int(wire)))
+        except Exception:
+            pass
+
+    page.on("requestfinished", lambda r: asyncio.create_task(on_finished(r)))
+
+
 async def run_arm_a(browser, q: str, t0: float) -> QueryResult:
     """Current approach: new page, full goto /search."""
     page = await browser.new_page()
@@ -179,9 +207,11 @@ async def run_arm_a(browser, q: str, t0: float) -> QueryResult:
         await page.close()
 
 
-async def run_arm_b(parked, q: str, t0: float) -> QueryResult:
+async def run_arm_b(parked, q: str, t0: float, wire_records=None,
+                    measure_ip: bool = True) -> QueryResult:
     """Repo approach: in-page fetch of /search from the parked homepage."""
     url = f"{SEARCH_URL}?q={q.replace(' ', '+')}"
+    base = len(wire_records) if wire_records is not None else 0
     res = await parked.evaluate(
         _FETCH_JS,
         {"url": url, "method": "GET", "headers": _FETCH_HEADERS,
@@ -189,13 +219,21 @@ async def run_arm_b(parked, q: str, t0: float) -> QueryResult:
     ) or {}
     body = res.get("body") or ""
     c = classify(body)
-    ip = await _exit_ip(parked)
+    ip = await _exit_ip(parked) if measure_ip else None
+    wire = 0
+    reqs = 0
+    if wire_records is not None:
+        for (u, status, w) in wire_records[base:]:
+            reqs += 1
+            if "/search" in u:
+                wire += w
     return QueryResult(
         arm="B", idx=0, query=q, ok=c["h3"] > 0, h3_count=c["h3"],
         sorry=c["sorry"], enablejs=c["enablejs"],
         status=int(res.get("status") or 0),
         latency_ms=int((time.perf_counter() - t0) * 1000),
         body_bytes=len(body.encode()), ip=ip,
+        wire_bytes=wire, request_count=reqs,
         error=None if c["h3"] > 0 or res.get("ok") else
         (res.get("error") or "fetch failed")[:200],
     )
@@ -216,15 +254,17 @@ async def mint(browser):
     try:
         await page.wait_for_selector("h3", timeout=8_000)
         print(f"  mint: first search h3=present (identity cleared)")
+        minted = True
     except Exception:
         body = await page.content()
         c = classify(body, page.url)
         print(f"  mint: first search h3={c['h3']} "
               f"sorry={c['sorry']} enablejs={c['enablejs']} "
               f"(identity NOT cleared)")
+        minted = False
     # Park back on the light homepage for the in-page fetches.
     await page.goto(HOME_URL, wait_until="domcontentloaded", timeout=45_000)
-    return page
+    return page, minted
 
 
 async def main() -> int:
@@ -234,11 +274,13 @@ async def main() -> int:
     ap.add_argument("--port", type=int, default=10001,
                     help="Decodo endpoint. 10000=rotating, 10001-10010=sticky.")
     ap.add_argument("--arm", choices=("a", "b", "both"), default="both")
+    ap.add_argument("--no-ip", action="store_true",
+                    help="Skip the ipify exit-IP check (pure SERP fetching).")
     ap.add_argument("--pace", type=float, default=0.0,
                     help="Seconds between keyword pairs.")
     args = ap.parse_args()
 
-    keywords = KEYWORDS[: args.n]
+    keywords = (KEYWORDS * max(1, (args.n + len(KEYWORDS) - 1) // len(KEYWORDS)))[: args.n]
     proxy = None if args.no_proxy else load_decodo(args.port)
     if not args.no_proxy and not proxy:
         print("(!) No Decodo row in DB; use --no-proxy to run on home IP.",
@@ -250,6 +292,8 @@ async def main() -> int:
           f"{len(keywords)} keywords, arms={args.arm}\n")
 
     results: list[QueryResult] = []
+    cam = None
+    browser = None
     try:
         cam = AsyncCamoufox(
             headless=True,
@@ -258,12 +302,28 @@ async def main() -> int:
             geoip=True,
             locale="en-US",
         )
-    except Exception as e:
-        print(f"camoufox construct failed: {type(e).__name__}: {e}")
-        return 2
+        browser = await cam.__aenter__()
+        parked = None
+        minted = False
+        for attempt in range(1, 4):
+            parked, minted = await mint(browser)
+            if minted:
+                break
+            print(f"  mint attempt {attempt} failed — relaunching...")
+            await parked.close()
+            await cam.__aexit__(None, None, None)
+            cam = AsyncCamoufox(
+                headless=True, proxy=proxy, humanize=False, geoip=True,
+                locale="en-US",
+            )
+            browser = await cam.__aenter__()
+        if not minted:
+            print("(!) All 3 mint attempts blocked — pool is burned right now.")
+            print("    This is the residential random walk, not arm B. Try later / another port.")
+            return 1
 
-    async with cam as browser:
-        parked = await mint(browser)
+        wire_records: list = []
+        _attach_wire_listener(parked, wire_records)
         arms = ("A", "B") if args.arm == "both" else (args.arm.upper(),)
         for i, q in enumerate(keywords, 1):
             if i > 1 and args.pace > 0:
@@ -273,17 +333,29 @@ async def main() -> int:
                 t0 = time.perf_counter()
                 r = (await run_arm_a(browser, q, t0)
                      if arm == "A"
-                     else await run_arm_b(parked, q, t0))
+                     else await run_arm_b(parked, q, t0, wire_records,
+                                          measure_ip=not args.no_ip))
                 r.idx = i
                 tag = "OK" if r.ok else ("SORRY" if r.sorry
                                          else ("ENABLEJS" if r.enablejs
                                                else "FAIL"))
+                wire = f" wire={r.wire_bytes/1024:.1f}KB" if r.wire_bytes else ""
                 print(f"  [arm {r.arm} q{i}] {q!r:<28} h3={r.h3_count} "
-                      f"status={r.status} bytes={r.body_bytes/1024:.1f} KB "
-                      f"ip={r.ip or '?'} lat={r.latency_ms}ms -> {tag}"
+                      f"status={r.status} body={r.body_bytes/1024:.1f} KB{wire}"
+                      + (f" ip={r.ip}" if r.ip else "")
+                      + f" lat={r.latency_ms}ms -> {tag}"
                       + (f"  err={r.error}" if r.error else ""))
                 results.append(r)
         await parked.close()
+    except Exception as e:
+        print(f"\n(!) {type(e).__name__}: {e}")
+        return 1
+    finally:
+        if browser is not None:
+            try:
+                await cam.__aexit__(None, None, None)
+            except Exception:
+                pass
 
     print("\n=== Summary (interleaved, same pool) ===")
     for arm in ("A", "B"):
@@ -292,11 +364,17 @@ async def main() -> int:
             continue
         oks = sum(1 for r in rs if r.ok)
         bytes_ok = [r.body_bytes for r in rs if r.ok]
+        wire_ok = [r.wire_bytes for r in rs if r.ok if r.wire_bytes]
         lat_ok = [r.latency_ms for r in rs if r.ok]
-        print(f"  arm {arm}: {oks}/{len(rs)} OK  "
-              f"bytes/OK={sum(bytes_ok)/len(bytes_ok)/1024:.1f} KB avg "
-              f"(n={len(bytes_ok)})  "
-              f"lat/OK={sum(lat_ok)/len(lat_ok):.0f}ms avg (n={len(lat_ok)})")
+        if not bytes_ok:
+            print(f"  arm {arm}: {oks}/{len(rs)} OK  (no successful queries)")
+            continue
+        line = (f"  arm {arm}: {oks}/{len(rs)} OK  "
+                f"body/OK={sum(bytes_ok)/len(bytes_ok)/1024:.1f} KB avg (n={len(bytes_ok)})  ")
+        if wire_ok:
+            line += (f"wire/OK={sum(wire_ok)/len(wire_ok)/1024:.1f} KB avg (n={len(wire_ok)})  ")
+        line += f"lat/OK={sum(lat_ok)/len(lat_ok):.0f}ms avg (n={len(lat_ok)})"
+        print(line)
 
     log_dir = Path(__file__).parent / "logs"
     log_dir.mkdir(exist_ok=True)

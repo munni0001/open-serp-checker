@@ -50,6 +50,8 @@ class Proxy(BaseModel):
     sticky_sessions: int = 1
     ip_blocklist_enabled: bool = False
     ip_blocklist_ttl_days: int = 1
+    provisioning_notes: Optional[str] = None
+    enabled_for_testing: bool = False
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 

@@ -7,9 +7,27 @@
         <h1 class="page-title">Proxies</h1>
         <p class="page-sub" style="margin:0;">Configure proxies here, then assign per-project or per-keyword. Credentials are stored as plaintext in the local SQLite DB.</p>
     </div>
-    <button class="btn btn-primary" id="toggleAdd" type="button">
-        <i data-lucide="plus"></i> Add Proxy
-    </button>
+    <div style="display:flex; gap:8px; align-items:center;">
+        <form method="post" action="/proxies/local_baseline/run" style="display:inline;">
+            <button class="btn btn-ghost" type="submit" title="Run 5-keyword script health check on home IP, no proxy">
+                <i data-lucide="home"></i> Run local baseline
+            </button>
+        </form>
+        <form method="post" style="display:flex; gap:4px; align-items:center;"
+              onsubmit="this.action='/proxies/matrix/run?country='+encodeURIComponent(this.country.value||'')">
+            <select name="country" style="height:30px;">
+                <option value="">no country</option>
+                <option value="US">US</option>
+                <option value="GB">GB</option>
+            </select>
+            <button class="btn btn-ghost" type="submit" title="Run all tests on every enabled provider (local baseline runs first; matrix aborts if baseline fails)">
+                <i data-lucide="layout-grid"></i> Run matrix
+            </button>
+        </form>
+        <button class="btn btn-primary" id="toggleAdd" type="button">
+            <i data-lucide="plus"></i> Add Proxy
+        </button>
+    </div>
 </div>
 
 <div class="card">
@@ -91,6 +109,23 @@
                     <input id="fBlocklistTtl" type="number" min="1" max="30" value="1">
                     <div style="font-size:11px; color:#888; margin-top:4px;">Residential IPs churn fast — 1 day is a sane default. Longer values will bias against IPs that have already changed hands.</div>
                 </div>
+
+                <div class="field" style="grid-column: 1 / -1;">
+                    <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                        <input id="fEnabledForTesting" type="checkbox">
+                        <span>Include in matrix runs (opts this provider into <code>/proxies/matrix/run</code>).</span>
+                    </label>
+                </div>
+
+                <div class="field" style="grid-column: 1 / -1;">
+                    <hr style="border:none; border-top:1px solid #333; margin: 6px 0;">
+                    <div style="font-size: 12px; color: #888; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px;">Provisioning notes</div>
+                </div>
+                <div class="field" style="grid-column: 1 / -1;">
+                    <label for="fProvisioningNotes">Notes (free-text)</label>
+                    <textarea id="fProvisioningNotes" rows="3" style="width:100%; font-family: var(--font-mono); font-size: 12px;" placeholder="Plan tier, sub-user, gotchas hit during setup, dashboard URL, whitelisted IPs…"></textarea>
+                    <div style="font-size:11px; color:#888; margin-top:4px;">Shown as a banner on the tests page so the review-writer sees the provisioning context before quoting numbers.</div>
+                </div>
             </div>
             <div style="display: flex; gap: 8px; margin-top: 18px;">
                 <button class="btn btn-primary" type="submit" id="submitBtn"><i data-lucide="check"></i> <span id="submitLabel">Create</span></button>
@@ -125,6 +160,7 @@
                 </td>
                 <td>
                     <div class="row-actions">
+                        <a class="btn btn-ghost btn-sm" href="/proxies/{{ p.id }}/tests" title="Tests"><i data-lucide="activity"></i></a>
                         <button class="btn btn-ghost btn-sm" data-action="test" title="Test proxy"><i data-lucide="play"></i></button>
                         <button class="btn btn-ghost btn-sm" data-action="edit" title="Edit"><i data-lucide="pencil"></i></button>
                         <button class="btn btn-danger btn-sm" data-action="delete" title="Delete"><i data-lucide="trash-2"></i></button>
@@ -174,6 +210,8 @@
         $('fStickySessions').value = '1';
         $('fBlocklistEnabled').checked = false;
         $('fBlocklistTtl').value = '1';
+        $('fEnabledForTesting').checked = false;
+        $('fProvisioningNotes').value = '';
         submitLabel.textContent = 'Create';
         syncSectionVisibility();
         panel.classList.remove('hidden');
@@ -195,6 +233,8 @@
         $('fStickySessions').value = String(p.sticky_sessions || 1);
         $('fBlocklistEnabled').checked = !!p.ip_blocklist_enabled;
         $('fBlocklistTtl').value = String(p.ip_blocklist_ttl_days || 1);
+        $('fEnabledForTesting').checked = !!p.enabled_for_testing;
+        $('fProvisioningNotes').value = p.provisioning_notes || '';
         submitLabel.textContent = 'Save';
         syncSectionVisibility();
         panel.classList.remove('hidden');
@@ -227,6 +267,8 @@
             sticky_sessions: mode === 'sticky' ? (parseInt($('fStickySessions').value, 10) || 1) : 1,
             ip_blocklist_enabled: $('fBlocklistEnabled').checked,
             ip_blocklist_ttl_days: parseInt($('fBlocklistTtl').value, 10) || 1,
+            enabled_for_testing: $('fEnabledForTesting').checked,
+            provisioning_notes: $('fProvisioningNotes').value.trim() || null,
         };
         if (!body.name) { toast('Name is required', 'error'); return; }
         try {

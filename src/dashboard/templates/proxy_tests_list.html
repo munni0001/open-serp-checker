@@ -1,0 +1,89 @@
+{% extends "_base.html" %}
+{% block title %}{{ proxy.name }} tests · serp-scrape{% endblock %}
+
+{% block body %}
+<div class="page-head">
+    <div>
+        <h1 class="page-title">{{ proxy.name }} · tests</h1>
+        <p class="page-sub" style="margin:0;">
+            <span class="cell-config">#{{ proxy.id }} · {{ proxy.provider }} · {{ proxy.host or '—' }}</span>
+            <a href="/proxies" style="margin-left:12px; color: var(--text-dim);">&larr; back to proxies</a>
+        </p>
+    </div>
+    <div style="display:flex; gap:8px; align-items:flex-start;">
+        <form method="post" action="/proxies/{{ proxy.id }}/tests/run?test_name=handshake">
+            <button class="btn btn-primary" type="submit">
+                <i data-lucide="play"></i> Run Handshake
+            </button>
+        </form>
+        <form method="post" style="display:flex; gap:4px;"
+              onsubmit="this.action='/proxies/{{ proxy.id }}/tests/run?test_name=pass_rate&country='+encodeURIComponent(this.country.value||'')">
+            <select name="country" class="btn btn-ghost btn-sm" style="height:auto; padding:6px 8px;" title="Requested country">
+                <option value="">no country</option>
+                <option value="US">US</option>
+                <option value="GB">UK</option>
+            </select>
+            <button class="btn btn-primary" type="submit">
+                <i data-lucide="play"></i> Run Pass Rate (cold)
+            </button>
+        </form>
+        <form method="post" style="display:flex; gap:4px;"
+              onsubmit="this.action='/proxies/{{ proxy.id }}/tests/run?test_name=warm&country='+encodeURIComponent(this.country.value||'')">
+            <select name="country" class="btn btn-ghost btn-sm" style="height:auto; padding:6px 8px;" title="Requested country">
+                <option value="">no country</option>
+                <option value="US">US</option>
+                <option value="GB">UK</option>
+            </select>
+            <button class="btn btn-primary" type="submit">
+                <i data-lucide="play"></i> Run Warm (W1/W2/W3)
+            </button>
+        </form>
+    </div>
+</div>
+
+{% if provisioning_notes %}
+<div class="card" style="padding: 10px 14px; border-left: 3px solid var(--accent); background: var(--surface-hover); margin-bottom: 12px;">
+    <div style="font-size:11px; color: var(--text-faint); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:4px;">Provisioning</div>
+    <div style="font-family: var(--font-mono); font-size: 12px; color: var(--text-dim); white-space: pre-wrap;" title="{{ provisioning_notes }}">{{ provisioning_notes }}</div>
+</div>
+{% endif %}
+
+<div class="card">
+    {% if runs %}
+    <table>
+        <thead>
+            <tr>
+                <th>Run</th>
+                <th>Test</th>
+                <th>Preset</th>
+                <th>Status</th>
+                <th>Started</th>
+                <th>Finished</th>
+                <th style="text-align:right;">Verdict</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in runs %}
+            <tr>
+                <td>
+                    <a href="/proxies/{{ proxy.id }}/tests/{{ r.id }}" style="font-weight:500;">#{{ r.id }}</a>
+                </td>
+                <td class="cell-config">{{ r.test_name }}</td>
+                <td class="cell-config">{{ r.preset or '—' }}</td>
+                <td class="cell-config">{{ r.status }}</td>
+                <td class="cell-config">{{ r.started_at }}</td>
+                <td class="cell-config">{{ r.finished_at or '—' }}</td>
+                <td class="cell-config" style="text-align:right;">{{ r.verdict or '—' }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div class="empty-state">
+        <i data-lucide="activity"></i>
+        <div class="title">No test runs yet</div>
+        <div class="sub">Click "Run Handshake" to fire the first test (~3 minutes).</div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

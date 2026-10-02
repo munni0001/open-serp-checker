@@ -108,6 +108,10 @@ class Database:
             cursor.execute("ALTER TABLE proxies ADD COLUMN ip_blocklist_enabled INTEGER NOT NULL DEFAULT 0")
         if 'ip_blocklist_ttl_days' not in proxy_cols:
             cursor.execute("ALTER TABLE proxies ADD COLUMN ip_blocklist_ttl_days INTEGER NOT NULL DEFAULT 1")
+        if 'provisioning_notes' not in proxy_cols:
+            cursor.execute("ALTER TABLE proxies ADD COLUMN provisioning_notes TEXT")
+        if 'enabled_for_testing' not in proxy_cols:
+            cursor.execute("ALTER TABLE proxies ADD COLUMN enabled_for_testing INTEGER NOT NULL DEFAULT 0")
 
         # IP outcome log — per proxy per exit IP, used by the blocklist retry logic
         # and by long-term reputation stats. Rows older than the proxy's TTL are purged.
@@ -126,6 +130,121 @@ class Database:
         cursor.execute(
             'CREATE INDEX IF NOT EXISTS idx_proxy_ip_log_lookup '
             'ON proxy_ip_log(proxy_id, exit_ip, seen_at DESC)'
+        )
+
+        # Proxy test runs — one row per test invocation (4.1).
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS proxy_test_runs (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                provider_id    INTEGER NOT NULL,
+                matrix_run_id  TEXT,
+                test_name      TEXT NOT NULL,
+                preset         TEXT,
+                started_at     TEXT NOT NULL,
+                finished_at    TEXT,
+                status         TEXT NOT NULL DEFAULT 'running',
+                summary_json   TEXT,
+                notes          TEXT,
+                FOREIGN KEY (provider_id) REFERENCES proxies (id) ON DELETE CASCADE
+            )
+        ''')
+        cursor.execute(
+            'CREATE INDEX IF NOT EXISTS idx_ptr_provider '
+            'ON proxy_test_runs(provider_id, started_at DESC)'
+        )
+        cursor.execute(
+            'CREATE INDEX IF NOT EXISTS idx_ptr_matrix '
+            'ON proxy_test_runs(matrix_run_id)'
+        )
+
+        # 4.9: relax provider_id to NULLABLE so local_baseline runs (no provider)
+        # can share this table. SQLite has no ALTER COLUMN — rebuild guarded by
+        # a PRAGMA check on the notnull flag.
+        pid_col = next(
+            (r for r in cursor.execute('PRAGMA table_info(proxy_test_runs)').fetchall()
+             if r[1] == 'provider_id'),
+            None,
+        )
+        if pid_col and pid_col[3] == 1:  # notnull == 1
+            cursor.execute('PRAGMA foreign_keys = OFF')
+            cursor.execute('''
+                CREATE TABLE proxy_test_runs_new (
+                    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                    provider_id    INTEGER,
+                    matrix_run_id  TEXT,
+                    test_name      TEXT NOT NULL,
+                    preset         TEXT,
+                    started_at     TEXT NOT NULL,
+                    finished_at    TEXT,
+                    status         TEXT NOT NULL DEFAULT 'running',
+                    summary_json   TEXT,
+                    notes          TEXT,
+                    FOREIGN KEY (provider_id) REFERENCES proxies (id) ON DELETE CASCADE
+                )
+            ''')
+            cursor.execute(
+                'INSERT INTO proxy_test_runs_new '
+                '(id, provider_id, matrix_run_id, test_name, preset, '
+                ' started_at, finished_at, status, summary_json, notes) '
+                'SELECT id, provider_id, matrix_run_id, test_name, preset, '
+                '       started_at, finished_at, status, summary_json, notes '
+                'FROM proxy_test_runs'
+            )
+            cursor.execute('DROP TABLE proxy_test_runs')
+            cursor.execute('ALTER TABLE proxy_test_runs_new RENAME TO proxy_test_runs')
+            cursor.execute(
+                'CREATE INDEX IF NOT EXISTS idx_ptr_provider '
+                'ON proxy_test_runs(provider_id, started_at DESC)'
+            )
+            cursor.execute(
+                'CREATE INDEX IF NOT EXISTS idx_ptr_matrix '
+                'ON proxy_test_runs(matrix_run_id)'
+            )
+            cursor.execute('PRAGMA foreign_keys = ON')
+
+        # 4.10: engine axis. Add browser_engine column if missing; backfill
+        # existing rows to 'chromium_stealth' (the historical hardcoded value).
+        cols_now = {r[1] for r in cursor.execute(
+            'PRAGMA table_info(proxy_test_runs)'
+        ).fetchall()}
+        if 'browser_engine' not in cols_now:
+            cursor.execute(
+                "ALTER TABLE proxy_test_runs ADD COLUMN "
+                "browser_engine TEXT NOT NULL DEFAULT 'chromium_stealth'"
+            )
+        if 'bandwidth_tier' not in cols_now:
+            cursor.execute(
+                "ALTER TABLE proxy_test_runs ADD COLUMN "
+                "bandwidth_tier TEXT NOT NULL DEFAULT 'default'"
+            )
+        if 'flow' not in cols_now:
+            cursor.execute(
+                "ALTER TABLE proxy_test_runs ADD COLUMN "
+                "flow TEXT NOT NULL DEFAULT 'direct'"
+            )
+
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS proxy_test_queries (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id          INTEGER NOT NULL,
+                keyword         TEXT,
+                exit_ip         TEXT,
+                exit_country    TEXT,
+                sticky_ip_held  INTEGER,
+                http_status     INTEGER,
+                got_429         INTEGER,
+                bytes_wire      INTEGER,
+                latency_ms      INTEGER,
+                passed          INTEGER,
+                blocked_reason  TEXT,
+                retry_attempted INTEGER NOT NULL DEFAULT 0,
+                retry_passed    INTEGER,
+                raw_json        TEXT,
+                FOREIGN KEY (run_id) REFERENCES proxy_test_runs (id) ON DELETE CASCADE
+            )
+        ''')
+        cursor.execute(
+            'CREATE INDEX IF NOT EXISTS idx_ptq_run ON proxy_test_queries(run_id)'
         )
 
         conn.commit()
@@ -234,6 +353,8 @@ class Database:
             sticky_sessions=d.get('sticky_sessions') or 1,
             ip_blocklist_enabled=bool(d.get('ip_blocklist_enabled') or 0),
             ip_blocklist_ttl_days=d.get('ip_blocklist_ttl_days') or 1,
+            provisioning_notes=d.get('provisioning_notes'),
+            enabled_for_testing=bool(d.get('enabled_for_testing') or 0),
             created_at=datetime.fromisoformat(d['created_at']),
             updated_at=datetime.fromisoformat(d['updated_at']),
         )
@@ -245,13 +366,15 @@ class Database:
             INSERT INTO proxies (name, type, provider, username, password, host, port,
                 mode, sticky_duration_min, sticky_sessions,
                 ip_blocklist_enabled, ip_blocklist_ttl_days,
+                provisioning_notes, enabled_for_testing,
                 created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             proxy.name, proxy.type, proxy.provider, proxy.username, proxy.password,
             proxy.host, proxy.port,
             proxy.mode, proxy.sticky_duration_min, proxy.sticky_sessions,
             1 if proxy.ip_blocklist_enabled else 0, proxy.ip_blocklist_ttl_days,
+            proxy.provisioning_notes, 1 if proxy.enabled_for_testing else 0,
             proxy.created_at.isoformat(), proxy.updated_at.isoformat(),
         ))
         proxy_id = cursor.lastrowid
@@ -278,14 +401,17 @@ class Database:
             'name', 'type', 'provider', 'username', 'password', 'host', 'port',
             'mode', 'sticky_duration_min', 'sticky_sessions',
             'ip_blocklist_enabled', 'ip_blocklist_ttl_days',
+            'provisioning_notes', 'enabled_for_testing',
         }
-        nullable = {'sticky_duration_min'}
+        nullable = {'sticky_duration_min', 'provisioning_notes'}
         updates = {
             k: v for k, v in fields.items()
             if k in allowed and (v is not None or k in nullable)
         }
         if 'ip_blocklist_enabled' in updates and not isinstance(updates['ip_blocklist_enabled'], int):
             updates['ip_blocklist_enabled'] = 1 if updates['ip_blocklist_enabled'] else 0
+        if 'enabled_for_testing' in updates and not isinstance(updates['enabled_for_testing'], int):
+            updates['enabled_for_testing'] = 1 if updates['enabled_for_testing'] else 0
         if not updates:
             return
         updates['updated_at'] = datetime.utcnow().isoformat()

@@ -1,0 +1,405 @@
+{% extends "_base.html" %}
+{% block title %}Run #{{ run.id }} · {{ proxy.name }} · serp-scrape{% endblock %}
+
+{% block body %}
+<div class="page-head">
+    <div>
+        <h1 class="page-title">Run #{{ run.id }} · {{ run.test_name }}{% if run.preset %} ({{ run.preset }}){% endif %}</h1>
+        <p class="page-sub" style="margin:0;">
+            {% if is_local_baseline %}
+            <span class="cell-config">{{ proxy.name }}</span>
+            <a href="/proxies" style="margin-left:12px; color: var(--text-dim);">&larr; back to proxies</a>
+            {% else %}
+            <span class="cell-config">{{ proxy.name }} · #{{ proxy.id }} · {{ proxy.provider }}</span>
+            <a href="/proxies/{{ proxy.id }}/tests" style="margin-left:12px; color: var(--text-dim);">&larr; back to runs</a>
+            {% endif %}
+        </p>
+    </div>
+</div>
+
+<div class="card">
+    <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:16px; margin-bottom:20px;">
+        <div>
+            <div style="font-size:11px; color: var(--text-faint); text-transform:uppercase; letter-spacing:0.05em;">Status</div>
+            <div style="font-family: var(--font-mono); font-size:15px;">{{ run.status }}</div>
+        </div>
+        <div>
+            <div style="font-size:11px; color: var(--text-faint); text-transform:uppercase; letter-spacing:0.05em;">Started</div>
+            <div style="font-family: var(--font-mono); font-size:13px; color: var(--text-dim);">{{ run.started_at }}</div>
+        </div>
+        <div>
+            <div style="font-size:11px; color: var(--text-faint); text-transform:uppercase; letter-spacing:0.05em;">Finished</div>
+            <div style="font-family: var(--font-mono); font-size:13px; color: var(--text-dim);">{{ run.finished_at or '—' }}</div>
+        </div>
+        {% if run.test_name == 'handshake' %}
+        <div>
+            <div style="font-size:11px; color: var(--text-faint); text-transform:uppercase; letter-spacing:0.05em;">Verdict</div>
+            <div style="font-family: var(--font-mono); font-size:15px; color: var(--accent);">{{ run.summary.verdict if run.summary else '—' }}</div>
+        </div>
+        <div>
+            <div style="font-size:11px; color: var(--text-faint); text-transform:uppercase; letter-spacing:0.05em;">Unique IPs</div>
+            <div style="font-family: var(--font-mono); font-size:15px;">{{ run.summary.unique_exit_ips if run.summary else '—' }}</div>
+        </div>
+        <div>
+            <div style="font-size:11px; color: var(--text-faint); text-transform:uppercase; letter-spacing:0.05em;">Attempts</div>
+            <div style="font-family: var(--font-mono); font-size:15px;">{{ run.summary.attempts_total if run.summary else queries|length }}</div>
+        </div>
+        {% elif run.test_name == 'pass_rate' %}
+        <div>
+            <div style="font-size:11px; color: var(--text-faint); text-transform:uppercase; letter-spacing:0.05em;">Raw pass</div>
+            <div style="font-family: var(--font-mono); font-size:15px; color: var(--accent);">
+                {{ run.summary.raw_pass if run.summary else '—' }}/{{ run.summary.n_keywords if run.summary else queries|length }}
+                {% if run.summary %}<span style="color: var(--text-dim); font-size: 12px;"> ({{ (run.summary.raw_pass_rate * 100)|round(0, 'floor') }}%)</span>{% endif %}
+            </div>
+        </div>
+        <div>
+            <div style="font-size:11px; color: var(--text-faint); text-transform:uppercase; letter-spacing:0.05em;">Retry-converted</div>
+            <div style="font-family: var(--font-mono); font-size:15px; color: var(--accent);">
+                {{ run.summary.retry_converted_pass if run.summary else '—' }}/{{ run.summary.n_keywords if run.summary else queries|length }}
+                {% if run.summary %}<span style="color: var(--text-dim); font-size: 12px;"> ({{ (run.summary.retry_converted_pass_rate * 100)|round(0, 'floor') }}%)</span>{% endif %}
+            </div>
+        </div>
+        <div>
+            <div style="font-size:11px; color: var(--text-faint); text-transform:uppercase; letter-spacing:0.05em;">Unique IPs</div>
+            <div style="font-family: var(--font-mono); font-size:15px;">{{ run.summary.unique_exit_ips if run.summary else '—' }}</div>
+        </div>
+        <div>
+            <div style="font-size:11px; color: var(--text-faint); text-transform:uppercase; letter-spacing:0.05em;">Geo honesty</div>
+            <div style="font-family: var(--font-mono); font-size:15px; color: var(--accent);">
+                {% if run.summary and run.summary.get('geo_honesty_pct') is not none %}
+                    {{ (run.summary.geo_honesty_pct * 100)|round(0, 'floor') }}%
+                    <span style="color: var(--text-dim); font-size: 12px;">vs {{ run.summary.requested_country }}</span>
+                {% else %}
+                    —
+                {% endif %}
+            </div>
+        </div>
+        <div>
+            <div style="font-size:11px; color: var(--text-faint); text-transform:uppercase; letter-spacing:0.05em;">429s</div>
+            <div style="font-family: var(--font-mono); font-size:15px;">{{ run.summary.get('got_429_count', 0) if run.summary else '—' }}</div>
+        </div>
+        {% elif run.test_name == 'local_baseline' %}
+        <div>
+            <div style="font-size:11px; color: var(--text-faint); text-transform:uppercase; letter-spacing:0.05em;">Verdict</div>
+            <div style="font-family: var(--font-mono); font-size:15px; color: {% if run.summary and run.summary.baseline_ok %}var(--pos-top){% else %}var(--pos-bad){% endif %};">
+                {% if run.summary %}
+                    {% if run.summary.baseline_ok %}baseline OK{% else %}baseline degraded{% endif %}
+                {% else %}—{% endif %}
+            </div>
+        </div>
+        <div>
+            <div style="font-size:11px; color: var(--text-faint); text-transform:uppercase; letter-spacing:0.05em;">Raw pass</div>
+            <div style="font-family: var(--font-mono); font-size:15px;">
+                {{ run.summary.raw_pass if run.summary else '—' }}/{{ run.summary.n_keywords if run.summary else queries|length }}
+                {% if run.summary %}<span style="color: var(--text-dim); font-size: 12px;"> (need ≥ {{ run.summary.pass_threshold }})</span>{% endif %}
+            </div>
+        </div>
+        <div>
+            <div style="font-size:11px; color: var(--text-faint); text-transform:uppercase; letter-spacing:0.05em;">Home IP</div>
+            <div style="font-family: var(--font-mono); font-size:13px; color: var(--text-dim);">{{ run.summary.exit_ip if run.summary else '—' }}</div>
+        </div>
+        <div>
+            <div style="font-size:11px; color: var(--text-faint); text-transform:uppercase; letter-spacing:0.05em;">Home country</div>
+            <div style="font-family: var(--font-mono); font-size:15px;">{{ run.summary.exit_country if run.summary else '—' }}</div>
+        </div>
+        <div>
+            <div style="font-size:11px; color: var(--text-faint); text-transform:uppercase; letter-spacing:0.05em;">Top blocked reason</div>
+            <div style="font-family: var(--font-mono); font-size:15px;">{{ run.summary.top_blocked_reason if run.summary else '—' }}</div>
+        </div>
+        {% elif run.test_name == 'warm' %}
+        <div>
+            <div style="font-size:11px; color: var(--text-faint); text-transform:uppercase; letter-spacing:0.05em;">Preset</div>
+            <div style="font-family: var(--font-mono); font-size:15px; color: var(--accent);">{{ run.preset or '—' }}</div>
+        </div>
+        <div>
+            <div style="font-size:11px; color: var(--text-faint); text-transform:uppercase; letter-spacing:0.05em;">Raw pass</div>
+            <div style="font-family: var(--font-mono); font-size:15px; color: var(--accent);">
+                {{ run.summary.raw_pass if run.summary else '—' }}/{{ run.summary.n_keywords if run.summary else queries|length }}
+                {% if run.summary %}<span style="color: var(--text-dim); font-size: 12px;"> ({{ (run.summary.raw_pass_rate * 100)|round(0, 'floor') }}%)</span>{% endif %}
+            </div>
+        </div>
+        <div>
+            <div style="font-size:11px; color: var(--text-faint); text-transform:uppercase; letter-spacing:0.05em;">Sticky IP held</div>
+            <div style="font-family: var(--font-mono); font-size:15px;">
+                {{ run.summary.sticky_ip_held_count if run.summary else '—' }}/{{ run.summary.n_keywords if run.summary else queries|length }}
+                {% if run.summary and run.summary.get('sticky_ip_held_pct') is not none %}
+                    <span style="color: var(--text-dim); font-size: 12px;"> ({{ (run.summary.sticky_ip_held_pct * 100)|round(0, 'floor') }}%)</span>
+                {% endif %}
+            </div>
+        </div>
+        <div>
+            <div style="font-size:11px; color: var(--text-faint); text-transform:uppercase; letter-spacing:0.05em;">Unique IPs</div>
+            <div style="font-family: var(--font-mono); font-size:15px;">{{ run.summary.unique_exit_ips if run.summary else '—' }}</div>
+        </div>
+        <div>
+            <div style="font-size:11px; color: var(--text-faint); text-transform:uppercase; letter-spacing:0.05em;">Geo honesty</div>
+            <div style="font-family: var(--font-mono); font-size:15px; color: var(--accent);">
+                {% if run.summary and run.summary.get('geo_honesty_pct') is not none %}
+                    {{ (run.summary.geo_honesty_pct * 100)|round(0, 'floor') }}%
+                    <span style="color: var(--text-dim); font-size: 12px;">vs {{ run.summary.requested_country }}</span>
+                {% else %}
+                    —
+                {% endif %}
+            </div>
+        </div>
+        <div>
+            <div style="font-size:11px; color: var(--text-faint); text-transform:uppercase; letter-spacing:0.05em;">429s</div>
+            <div style="font-family: var(--font-mono); font-size:15px;">{{ run.summary.get('got_429_count', 0) if run.summary else '—' }}</div>
+        </div>
+        {% endif %}
+    </div>
+
+    {% if run.summary and run.summary.get('country_breakdown') %}
+    <div style="font-size:12px; color:var(--text-faint); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:8px;">Exit country breakdown</div>
+    <div style="font-family: var(--font-mono); font-size:13px; color: var(--text-dim); margin-bottom: 20px;">
+        {% for cc, n in run.summary.country_breakdown.items() %}<span style="margin-right:14px;">{{ cc }}: {{ n }}</span>{% endfor %}
+    </div>
+    {% endif %}
+
+    {% if run.test_name == 'handshake' and run.summary and run.summary.by_client %}
+    <div style="font-size:12px; color:var(--text-faint); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:8px;">By client</div>
+    <table style="margin-bottom:24px;">
+        <thead>
+            <tr>
+                <th>Client</th>
+                <th>Pass</th>
+                <th>Avg latency</th>
+                <th>Top blocked reason</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for client, s in run.summary.by_client.items() %}
+            <tr>
+                <td style="font-weight:500;">{{ client }}</td>
+                <td class="cell-config">{{ s.pass }}/{{ s.total }}</td>
+                <td class="cell-config">{{ (s.avg_latency_ms|string + ' ms') if s.avg_latency_ms is not none else '—' }}</td>
+                <td class="cell-config">{{ s.top_blocked_reason or '—' }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+
+    {% if run.test_name == 'pass_rate' and run.summary %}
+    <div style="font-size:12px; color:var(--text-faint); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:8px;">Cost — cold preset</div>
+    <table style="margin-bottom:24px;">
+        <thead>
+            <tr>
+                <th>Metric</th>
+                <th>Value</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>Avg KB / success (initial)</td>
+                <td class="cell-config">{{ run.summary.avg_kb_success if run.summary.avg_kb_success is not none else '—' }} KB</td>
+            </tr>
+            <tr>
+                <td>Avg KB / block</td>
+                <td class="cell-config">{{ run.summary.avg_kb_blocked if run.summary.avg_kb_blocked is not none else '—' }} KB</td>
+            </tr>
+            <tr>
+                <td>Avg KB / retry success</td>
+                <td class="cell-config">{{ run.summary.avg_kb_retry_success if run.summary.avg_kb_retry_success is not none else '—' }} KB</td>
+            </tr>
+            <tr>
+                <td>Effective KB per successful SERP</td>
+                <td class="cell-config" style="color: var(--accent);">{{ run.summary.effective_kb_per_success if run.summary.effective_kb_per_success is not none else '—' }} KB</td>
+            </tr>
+            <tr>
+                <td>Retries fired</td>
+                <td class="cell-config">{{ run.summary.retry_attempts }}</td>
+            </tr>
+            <tr>
+                <td>Top blocked reason</td>
+                <td class="cell-config">{{ run.summary.top_blocked_reason or '—' }}</td>
+            </tr>
+        </tbody>
+    </table>
+    {% endif %}
+
+    {% if run.test_name == 'warm' and run.summary %}
+    <div style="font-size:12px; color:var(--text-faint); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:8px;">Cost — {{ run.preset }} preset</div>
+    <table style="margin-bottom:24px;">
+        <thead>
+            <tr>
+                <th>Metric</th>
+                <th>Value</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>First query (cold-equivalent)</td>
+                <td class="cell-config">{{ run.summary.first_query_kb if run.summary.first_query_kb is not none else '—' }} KB</td>
+            </tr>
+            <tr>
+                <td>Subsequent queries (steady state)</td>
+                <td class="cell-config" style="color: var(--accent);">{{ run.summary.subsequent_avg_kb if run.summary.subsequent_avg_kb is not none else '—' }} KB</td>
+            </tr>
+            <tr>
+                <td>Avg KB / success</td>
+                <td class="cell-config">{{ run.summary.avg_kb_success if run.summary.avg_kb_success is not none else '—' }} KB</td>
+            </tr>
+            <tr>
+                <td>Avg KB / block</td>
+                <td class="cell-config">{{ run.summary.avg_kb_blocked if run.summary.avg_kb_blocked is not none else '—' }} KB</td>
+            </tr>
+            <tr>
+                <td>Top blocked reason</td>
+                <td class="cell-config">{{ run.summary.top_blocked_reason or '—' }}</td>
+            </tr>
+        </tbody>
+    </table>
+    {% endif %}
+
+    {% if run.notes %}
+    <div style="background: var(--surface-hover); border-left: 3px solid var(--pos-bad); padding: 10px 14px; margin-bottom: 20px; font-family: var(--font-mono); font-size: 12px; color: var(--text-dim);">
+        {{ run.notes }}
+    </div>
+    {% endif %}
+</div>
+
+<div class="card">
+    {% if run.test_name == 'warm' %}
+    <div style="font-size:12px; color:var(--text-faint); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:8px;">Per-keyword queries ({{ queries|length }})</div>
+    <table>
+        <thead>
+            <tr>
+                <th>#</th>
+                <th>Keyword</th>
+                <th>Exit IP</th>
+                <th>Country</th>
+                <th>Sticky held</th>
+                <th>HTTP</th>
+                <th>Bytes</th>
+                <th>Warmup?</th>
+                <th>Warmup KB</th>
+                <th>Latency</th>
+                <th>Pass</th>
+                <th>Blocked reason</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for q in queries %}
+            <tr>
+                <td class="cell-config">{{ loop.index }}</td>
+                <td>{{ q.keyword or '—' }}</td>
+                <td class="cell-config">{{ q.exit_ip or '—' }}</td>
+                <td class="cell-config" style="color: {% if run.summary and run.summary.get('requested_country') and q.exit_country and q.exit_country != run.summary.requested_country %}var(--pos-bad){% endif %};">{{ q.exit_country or '—' }}</td>
+                <td class="cell-config" style="color: {% if q.sticky_ip_held == 1 %}var(--pos-top){% elif q.sticky_ip_held == 0 %}var(--pos-bad){% else %}var(--text-dim){% endif %};">
+                    {% if q.sticky_ip_held == 1 %}yes{% elif q.sticky_ip_held == 0 %}no{% else %}—{% endif %}
+                </td>
+                <td class="cell-config">{{ q.http_status if q.http_status else '—' }}</td>
+                <td class="cell-config">{{ q.bytes_wire or 0 }}</td>
+                <td class="cell-config">{{ 'yes' if q.raw.get('warmup_this_call') else 'no' }}</td>
+                <td class="cell-config">{{ (q.raw.get('warmup_bytes', 0) / 1024)|round(0, 'floor') }}</td>
+                <td class="cell-config">{{ q.latency_ms }} ms</td>
+                <td class="cell-config" style="color: {{ 'var(--pos-top)' if q.passed else 'var(--pos-bad)' }};">{{ 'yes' if q.passed else 'no' }}</td>
+                <td class="cell-config">{{ q.blocked_reason or '—' }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% elif run.test_name == 'local_baseline' %}
+    <div style="font-size:12px; color:var(--text-faint); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:8px;">Per-keyword queries ({{ queries|length }})</div>
+    <table>
+        <thead>
+            <tr>
+                <th>#</th>
+                <th>Keyword</th>
+                <th>HTTP</th>
+                <th>Bytes</th>
+                <th>Latency</th>
+                <th>Passed</th>
+                <th>Blocked reason</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for q in queries %}
+            <tr>
+                <td class="cell-config">{{ loop.index }}</td>
+                <td>{{ q.keyword or '—' }}</td>
+                <td class="cell-config">{{ q.http_status if q.http_status else '—' }}</td>
+                <td class="cell-config">{{ q.bytes_wire or 0 }}</td>
+                <td class="cell-config">{{ q.latency_ms }} ms</td>
+                <td class="cell-config" style="color: {{ 'var(--pos-top)' if q.passed else 'var(--pos-bad)' }};">{{ 'yes' if q.passed else 'no' }}</td>
+                <td class="cell-config">{{ q.blocked_reason or '—' }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% elif run.test_name == 'pass_rate' %}
+    <div style="font-size:12px; color:var(--text-faint); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:8px;">Per-keyword queries ({{ queries|length }})</div>
+    <table>
+        <thead>
+            <tr>
+                <th>#</th>
+                <th>Keyword</th>
+                <th>Exit IP</th>
+                <th>Country</th>
+                <th>HTTP</th>
+                <th>Bytes</th>
+                <th>Latency</th>
+                <th>Initial</th>
+                <th>Blocked reason</th>
+                <th>Retry?</th>
+                <th>Retry passed</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for q in queries %}
+            <tr>
+                <td class="cell-config">{{ loop.index }}</td>
+                <td>{{ q.keyword or '—' }}</td>
+                <td class="cell-config">{{ q.exit_ip or '—' }}</td>
+                <td class="cell-config" style="color: {% if run.summary and run.summary.get('requested_country') and q.exit_country and q.exit_country != run.summary.requested_country %}var(--pos-bad){% endif %};">{{ q.exit_country or '—' }}</td>
+                <td class="cell-config">{{ q.http_status if q.http_status else '—' }}</td>
+                <td class="cell-config">{{ q.bytes_wire or 0 }}</td>
+                <td class="cell-config">{{ q.latency_ms }} ms</td>
+                <td class="cell-config" style="color: {{ 'var(--pos-top)' if q.passed else 'var(--pos-bad)' }};">{{ 'yes' if q.passed else 'no' }}</td>
+                <td class="cell-config">{{ q.blocked_reason or '—' }}</td>
+                <td class="cell-config">{{ 'yes' if q.retry_attempted else 'no' }}</td>
+                <td class="cell-config" style="color: {% if q.retry_passed == 1 %}var(--pos-top){% elif q.retry_passed == 0 %}var(--pos-bad){% else %}var(--text-dim){% endif %};">
+                    {% if q.retry_passed == 1 %}yes{% elif q.retry_passed == 0 %}no{% else %}—{% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div style="font-size:12px; color:var(--text-faint); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:8px;">Per-attempt queries ({{ queries|length }})</div>
+    <table>
+        <thead>
+            <tr>
+                <th>#</th>
+                <th>Client</th>
+                <th>IP #</th>
+                <th>Exit IP</th>
+                <th>Country</th>
+                <th>HTTP</th>
+                <th>Bytes</th>
+                <th>Latency</th>
+                <th>Pass</th>
+                <th>Blocked reason</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for q in queries %}
+            <tr>
+                <td class="cell-config">{{ loop.index }}</td>
+                <td class="cell-config">{{ q.raw.get('client', '?') }}</td>
+                <td class="cell-config">{{ q.raw.get('ip_no', '?') }}</td>
+                <td class="cell-config">{{ q.exit_ip or '—' }}</td>
+                <td class="cell-config">{{ q.exit_country or '—' }}</td>
+                <td class="cell-config">{{ q.http_status if q.http_status else '—' }}</td>
+                <td class="cell-config">{{ q.bytes_wire or 0 }}</td>
+                <td class="cell-config">{{ q.latency_ms }} ms</td>
+                <td class="cell-config" style="color: {{ 'var(--pos-top)' if q.passed else 'var(--pos-bad)' }};">{{ 'yes' if q.passed else 'no' }}</td>
+                <td class="cell-config">{{ q.blocked_reason or '—' }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+</div>
+{% endblock %}
