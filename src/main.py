@@ -283,6 +283,7 @@ async def proxy_tests_run(
     background: BackgroundTasks,
     test_name: str = "handshake",
     country: Optional[str] = None,
+    engine: str = "camoufox",
 ):
     p = db.get_proxy(proxy_id)
     if not p:
@@ -292,7 +293,7 @@ async def proxy_tests_run(
         background.add_task(run_handshake_sync, proxy_id, None, settings.database_path)
     elif test_name == "pass_rate":
         background.add_task(
-            run_pass_rate_sync, proxy_id, None, settings.database_path, cc,
+            run_pass_rate_sync, proxy_id, None, settings.database_path, cc, engine,
         )
     elif test_name == "warm":
         from src.core.proxy_tests.tests.warm import (

@@ -28,6 +28,7 @@ from playwright.async_api import async_playwright
 from src.core.proxy_tests.browsers import (
     ENGINE_CAMOUFOX,
     ENGINE_CHROMIUM_STEALTH,
+    ENGINE_GOOGLE_IDENTITY,
     launch_browser,
     new_stealth_context,
 )
@@ -193,13 +194,94 @@ async def _run_one_keyword(context, query: str, flow: str) -> dict:
     return {"initial": initial, "retry": retry}
 
 
+async def _execute_identity(
+    run_id: int, creds: dict, db_path: str,
+    country: Optional[str] = None,
+    n_keywords: int = len(KEYWORDS),
+) -> tuple[int, list[int]]:
+    """Minted-identity axis (3.8): one Camoufox identity minted, parked, and
+    replayed via in-page fetch (see src/core/engines/google_identity.py).
+
+    Recycle semantics:
+    - On any block: close the identity, mint fresh, retry the blocked query
+      once on the fresh identity (recorded as retry_attempted).
+    - Proactively after `query_limit` clean queries (fresh IP before the
+      current one goes stale/hot; default 25, tunable).
+    - 3 consecutive failed mints -> PoolBurned -> the run is finalized as
+      error with reason pool_burned (no hang, no wasted queries).
+
+    Returns (identities_used, queries_per_identity) for the run summary.
+    """
+    from src.core.engines.google_identity import (
+        DEFAULT_QUERY_LIMIT, run_identity_queries,
+    )
+
+    pw_proxy = pw_proxy_dict(creds, sticky=False, country=country)
+    seq = 0
+
+    async def on_query(kw: str, result: dict, is_retry: bool,
+                       identity_index: int) -> None:
+        nonlocal seq
+        seq += 1
+        if seq > 1:
+            await asyncio.sleep(random.uniform(PACING_MIN_S, PACING_MAX_S))
+
+        h3 = result.get("h3_count", 0)
+        passed = 1 if (result.get("blocked_reason") is None
+                       and h3 >= H3_PASS_BAR) else 0
+        exit_ip = result.get("exit_ip")
+        exit_country = await asyncio.to_thread(lookup_country, exit_ip)
+        add_query(
+            run_id, db_path=db_path,
+            keyword=kw,
+            exit_ip=exit_ip,
+            exit_country=exit_country,
+            sticky_ip_held=None,
+            http_status=result.get("status", 0),
+            got_429=1 if result.get("status") == 429 else 0,
+            bytes_wire=result.get("wire_bytes", 0),
+            latency_ms=result.get("latency_ms", 0),
+            passed=passed,
+            blocked_reason=result.get("blocked_reason"),
+            retry_attempted=1 if is_retry else 0,
+            retry_passed=(passed if is_retry else None),
+            raw_json={
+                "identity": identity_index,
+                "query_index": seq,
+                "h3_count": h3,
+                "wire_bytes": result.get("wire_bytes", 0),
+                "request_count": result.get("request_count", 0),
+                "body_bytes": result.get("body_bytes", 0),
+                "retry_of_block": result.get("retry_of_block"),
+                "blocked_reason": result.get("blocked_reason"),
+                "error": result.get("error"),
+            },
+        )
+
+    identities_used, queries_per_identity = await run_identity_queries(
+        KEYWORDS[:n_keywords],
+        on_query=on_query,
+        proxy=pw_proxy,
+        geo="us",
+        language="en",
+        capture_exit_ip=True,
+        query_limit=DEFAULT_QUERY_LIMIT,
+    )
+    return identities_used, queries_per_identity
+
+
 async def _execute(
     run_id: int, creds: dict, db_path: str, country: Optional[str] = None,
     engine: str = ENGINE_CAMOUFOX,
     tier: str = TIER_DOCONLY,
     flow: str = FLOW_HOME,
     n_keywords: int = len(KEYWORDS),
-) -> None:
+) -> Optional[tuple[int, list[int]]]:
+    if engine == ENGINE_GOOGLE_IDENTITY:
+        return await _execute_identity(
+            run_id, creds, db_path, country=country, n_keywords=n_keywords,
+        )
+
     # 4.10 persistent lifecycle: one browser+context reused across all N
     # keywords. Rotating pool still rotates IP per HTTP connection.
     pw_proxy = pw_proxy_dict(creds, sticky=False, country=country)
@@ -300,6 +382,7 @@ async def _execute(
 
 def _aggregate(
     run_id: int, db_path: str, requested_country: Optional[str] = None,
+    identity_stats: Optional[tuple[int, list[int]]] = None,
 ) -> dict:
     data = get_run(run_id, db_path=db_path)
     queries = data["queries"] if data else []
@@ -401,7 +484,25 @@ def _aggregate(
         "geo_honesty_pct": geo_honesty_pct,
         "got_429_count": got_429_count,
         "top_blocked_reason": top_blocked_reason,
+        **(_identity_summary(identity_stats)
+           if identity_stats is not None else {}),
     }
+
+
+def _identity_summary(identity_stats: tuple[int, list[int]]) -> dict:
+    """identity-lifetime observability for the minted-identity axis (3.8)."""
+    identities_used, queries_per_identity = identity_stats
+    out: dict = {
+        "identities_used": identities_used,
+        "queries_per_identity": queries_per_identity,
+    }
+    if queries_per_identity:
+        out["avg_queries_per_identity"] = round(
+            sum(queries_per_identity) / len(queries_per_identity), 1
+        )
+        out["min_queries_per_identity"] = min(queries_per_identity)
+        out["max_queries_per_identity"] = max(queries_per_identity)
+    return out
 
 
 def run_pass_rate_sync(
@@ -414,6 +515,8 @@ def run_pass_rate_sync(
     flow: str = FLOW_HOME,
     n_keywords: int = len(KEYWORDS),
 ) -> int:
+    from src.core.engines.google_identity import PoolBurned
+
     creds = load_provider(provider_id, db_path)
     run_id = create_run(
         provider_id, "pass_rate", preset="cold",
@@ -422,12 +525,22 @@ def run_pass_rate_sync(
         db_path=db_path,
     )
     try:
-        asyncio.run(_execute(
+        identity_stats = asyncio.run(_execute(
             run_id, creds, db_path, country=country, engine=browser_engine,
             tier=bandwidth_tier, flow=flow, n_keywords=n_keywords,
         ))
-        summary = _aggregate(run_id, db_path, requested_country=country)
+        summary = _aggregate(run_id, db_path, requested_country=country,
+                             identity_stats=identity_stats)
         finalize_run(run_id, "done", summary=summary, db_path=db_path)
+    except PoolBurned as e:
+        # Pool is dead right now — stop cleanly, mark the run error. The
+        # 3.7 0/20 day is the existence proof for this path.
+        finalize_run(
+            run_id, "error",
+            notes=f"{type(e).__name__}: {e}"[:500],
+            db_path=db_path,
+        )
+        raise
     except Exception as e:
         finalize_run(
             run_id, "error",

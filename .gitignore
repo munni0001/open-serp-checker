@@ -32,6 +32,7 @@ scripts/probes/logs/
 .vscode/
 .DS_Store
 *.swp
+.claude/
 
 # Testing / misc
 test_*.py

@@ -297,33 +297,61 @@ async def fetch(
     capture_exit_ip: bool = False,
     blocklist_check: Optional[Callable[[str], bool]] = None,
     max_ip_retries: int = 1,
+    mode: str = "identity",
 ) -> Tuple[str, str, Optional[str]]:
-    """Fetch a Google SERP via Playwright. Returns (html, final_url, exit_ip).
+    """Fetch a Google SERP. Returns (html, final_url, exit_ip).
 
-    Google gates /search behind a JS challenge that no pure-HTTP client can pass.
-    This drives a stealth-patched headless Chromium to execute the challenge
-    and return the rendered SERP.
+    Two modes (session 3.8):
+    - "identity" (default) — the minted-identity + in-page fetch mechanism.
+      One Camoufox browser earns the JS challenge once and parks a homepage
+      tab; every query is an in-page `fetch()` of /search from that tab, so
+      the same connection / IP / cookie are held for the whole identity.
+      Recycles (close + re-mint + retry once) on block. Requires a rotating
+      proxy; callers on sticky/direct should pass mode="navigation".
+      See src/core/engines/google_identity.py.
+    - "navigation" — the pre-3.8 path below: stealth-patched headless
+      Chromium, homepage warm, full `goto /search` per query. Kept for
+      regression and the no-proxy baseline. Byte-identical to pre-3.8.
 
-    Warms the context by hitting the homepage first — Google captchas cold
-    browser sessions on ~1 in 5 first-search requests otherwise.
+    When identity mode raises, the only error that escapes is PoolBurned
+    (3 consecutive mints failed) — callers mark the run error with reason
+    pool_burned.
 
-    IP blocklist support (all optional, opt-in per caller):
-    - `capture_exit_ip=True` hits ipify at context start to learn the exit IP.
-      Adds ~200 bytes + ~500ms per fetch. Off by default so users who don't
-      want the feature don't pay the bandwidth cost.
-    - `blocklist_check(ip) -> bool` — if provided, called with the captured IP;
-      returning True means "this IP is known-bad, get me a new one." The context
-      is closed and a fresh one opened, up to `max_ip_retries` times.
-    - Returned `exit_ip` is the IP we actually used for the search (may be None
-      if capture_exit_ip=False or ipify failed).
+    Blocklist support applies to both modes:
+    - `capture_exit_ip=True` hits ipify to learn the exit IP.
+    - `blocklist_check(ip) -> bool` — returning True means "this IP is
+      known-bad, get me a new one." In identity mode this is evaluated at
+      mint time (a blocklisted exit IP recycles the identity); in navigation
+      mode the context is closed and a fresh one opened up to
+      `max_ip_retries` times.
+    - Returned `exit_ip` is the IP we actually used (may be None if
+      capture_exit_ip=False or ipify failed).
 
     `results_per_page` is accepted for signature stability but ignored —
     Google returns ~10/page now that `num` is dead; pagination is separate.
     """
-    from playwright.async_api import async_playwright
+    from src.core.engines import google_identity as gi
 
     proxy_dict = _proxy_url_to_dict(proxy)
     timeout_ms = int(timeout * 1000)
+
+    if mode == "identity":
+        result = await gi.fetch_identity(
+            query,
+            proxy=proxy_dict,
+            geo=geo,
+            language=language,
+            timeout_ms=timeout_ms,
+            capture_exit_ip=capture_exit_ip,
+            blocklist_check=blocklist_check,
+        )
+        return result["html"], result["final_url"], result.get("exit_ip")
+
+    if mode != "navigation":
+        raise ValueError(f"unknown google fetch mode {mode!r}; "
+                         "expected 'identity' or 'navigation'")
+
+    from playwright.async_api import async_playwright
 
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(headless=True, args=_STEALTH_ARGS)

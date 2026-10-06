@@ -34,7 +34,11 @@ from src.core.engines.google import (
 
 ENGINE_CHROMIUM_STEALTH = "chromium_stealth"
 ENGINE_CAMOUFOX = "camoufox"
-ENGINES = (ENGINE_CHROMIUM_STEALTH, ENGINE_CAMOUFOX)
+# Not launched by `launch_browser` — pass_rate handles it via the
+# minted-identity machinery in src/core/engines/google_identity.py. Listed
+# here so the engine axis (4.10) and dashboards see it as a valid engine.
+ENGINE_GOOGLE_IDENTITY = "google_identity"
+ENGINES = (ENGINE_CHROMIUM_STEALTH, ENGINE_CAMOUFOX, ENGINE_GOOGLE_IDENTITY)
 
 
 async def launch_browser(pw, engine: str, pw_proxy: Optional[dict] = None):
@@ -63,6 +67,12 @@ async def launch_browser(pw, engine: str, pw_proxy: Optional[dict] = None):
         # For no-proxy (local) it's a no-op — geoip lookup on the local IP.
         opts = launch_options(headless=True, proxy=pw_proxy, geoip=True)
         return await pw.firefox.launch(**opts)
+
+    if engine == ENGINE_GOOGLE_IDENTITY:
+        raise ValueError(
+            f"engine {engine!r} is handled by pass_rate's identity axis "
+            "(MintedIdentity), not launch_browser"
+        )
 
     raise ValueError(f"unknown engine {engine!r}; expected one of {ENGINES}")
 

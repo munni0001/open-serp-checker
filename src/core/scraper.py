@@ -8,6 +8,7 @@ import httpx
 from src.config import settings
 from src.core.database import Database
 from src.core.engines import bing, google
+from src.core.engines.google_identity import PoolBurned
 from src.models import Keyword, KeywordResult, Project
 
 
@@ -62,6 +63,25 @@ def build_proxy_url(proxy) -> Optional[str]:
     if user and password:
         return f"{scheme}://{quote(user)}:{quote(password)}@{host}:{port}"
     return f"{scheme}://{host}:{port}"
+
+
+def _google_mode_for(proxy_obj) -> str:
+    """Pick the google engine mode for this proxy.
+
+    Identity mode (3.8) is the default — one minted Camoufox identity replayed
+    via in-page fetch — but it requires a *rotating* residential proxy: the
+    whole premise is "fresh-but-held IP", so a recycled identity must land on a
+    NEW exit IP. On sticky or direct the parked-tab trick is meaningless (and
+    recycling on a sticky port would re-hold the same burned IP), so those fall
+    back to "navigation". A plain URL (env config) can't tell sticky from
+    rotating, so it's treated as rotating.
+    """
+    if proxy_obj is None:
+        return "navigation"  # direct: identity is meaningless, keep the baseline honest
+    if isinstance(proxy_obj, str):
+        return "identity"
+    mode = str(getattr(proxy_obj, "mode", "rotating") or "rotating").lower()
+    return "identity" if mode == "rotating" else "navigation"
 
 
 class SerpScraper:
@@ -123,6 +143,7 @@ class SerpScraper:
                     blocklist_check = lambda ip: self.db.is_ip_blocklisted(  # noqa: E731
                         proxy_id, ip, ttl_days
                     )
+                mode = _google_mode_for(proxy_obj)
                 html, final_url, exit_ip = await google.fetch(
                     keyword.term,
                     geo=keyword.geo,
@@ -131,6 +152,7 @@ class SerpScraper:
                     timeout=self.timeout,
                     capture_exit_ip=capture_ip,
                     blocklist_check=blocklist_check,
+                    mode=mode,
                 )
                 match = google.parse(
                     html, project.domain or "", keyword.max_position,
@@ -138,6 +160,11 @@ class SerpScraper:
                 )
             else:
                 raise ValueError(f"Unknown engine: {keyword.engine!r}")
+        except PoolBurned as e:
+            # 3 consecutive mints failed — the pool is dead right now. Stop
+            # cleanly (no hang, no endless retry) and mark the run error.
+            match = {"position": None, "url": "", "found": False,
+                     "status": "error", "error": str(e)[:200]}
         except Exception as e:
             # Broadened from httpx.HTTPError to catch Playwright errors too
             # (playwright raises its own hierarchy without a shared base).
