@@ -1,5 +1,5 @@
 {% extends "_base.html" %}
-{% block title %}{{ project.name }} · serp-scrape{% endblock %}
+{% block title %}{{ project.name }} · open-serp-checker{% endblock %}
 
 {% block body %}
 <a class="breadcrumb" href="/"><i data-lucide="chevron-left"></i> Projects</a>
@@ -85,8 +85,11 @@
                 <div class="field">
                     <label>Engine</label>
                     <select id="kwEngine">
-                        <option value="bing">bing</option>
-                        <option value="google">google</option>
+                        <option value="bing">bing (free, no key)</option>
+                        <option value="google">google (needs proxy)</option>
+                        <option value="searxng">searxng (free, needs instance)</option>
+                        <option value="dataforseo">dataforseo (paid API)</option>
+                        <option value="serper">serper (paid API)</option>
                     </select>
                 </div>
                 <div class="field"><label>Geo</label><input id="kwGeo" placeholder="{{ project.default_geo }}"></div>
@@ -100,6 +103,13 @@
                         <option value="">(project default)</option>
                         {% for p in proxies %}<option value="{{ p.id }}">{{ p.name }}</option>{% endfor %}
                     </select>
+                    <div class="hint">
+                        No proxy yet? Recommended for SERP scraping:
+                        <a href="https://brightdata.com/?ref=open-serp-checker" target="_blank" rel="noopener nofollow sponsored">Bright Data</a> ·
+                        <a href="https://oxylabs.io/?ref=open-serp-checker" target="_blank" rel="noopener nofollow sponsored">Oxylabs</a> ·
+                        <a href="https://decodo.com/?ref=open-serp-checker" target="_blank" rel="noopener nofollow sponsored">Decodo</a> ·
+                        <a href="https://www.webshare.io/?ref=open-serp-checker" target="_blank" rel="noopener nofollow sponsored">Webshare</a>
+                    </div>
                 </div>
             </div>
             <input type="hidden" id="kwRpp" value="">
@@ -443,6 +453,9 @@
                 <select class="inline" id="edit-eng-${row.dataset.id}">
                     <option value="bing"${eng === 'bing' ? ' selected' : ''}>bing</option>
                     <option value="google"${eng === 'google' ? ' selected' : ''}>google</option>
+                    <option value="searxng"${eng === 'searxng' ? ' selected' : ''}>searxng</option>
+                    <option value="dataforseo"${eng === 'dataforseo' ? ' selected' : ''}>dataforseo</option>
+                    <option value="serper"${eng === 'serper' ? ' selected' : ''}>serper</option>
                 </select>
                 <input class="inline" id="edit-geo-${row.dataset.id}" value="${row.dataset.geo}" placeholder="geo">
                 <input class="inline" id="edit-int-${row.dataset.id}" type="number" min="1" value="${row.dataset.interval}" placeholder="hours">

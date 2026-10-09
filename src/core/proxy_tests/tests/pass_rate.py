@@ -27,18 +27,17 @@ from playwright.async_api import async_playwright
 
 from src.core.proxy_tests.browsers import (
     ENGINE_CAMOUFOX,
-    ENGINE_CHROMIUM_STEALTH,
     ENGINE_GOOGLE_IDENTITY,
     launch_browser,
     new_stealth_context,
 )
 from src.core.proxy_tests.flows import (
-    FLOW_DIRECT, FLOW_HOME, initiate_search, wait_for_serp,
+    FLOW_HOME, initiate_search, wait_for_serp,
 )
 from src.core.proxy_tests.geoip import lookup_country
 from src.core.proxy_tests.providers import load_provider, pw_proxy_dict
 from src.core.proxy_tests.route_rules import (
-    TIER_DEFAULT, TIER_DOCONLY, make_route_handler,
+    TIER_DOCONLY, make_route_handler,
 )
 from src.core.proxy_tests.store import (
     add_query,
@@ -47,7 +46,7 @@ from src.core.proxy_tests.store import (
     get_run,
 )
 
-DEFAULT_DB = "serp_scraper.db"
+DEFAULT_DB = "open_serp_checker.db"
 IPIFY_URL = "https://api.ipify.org?format=json"
 
 # Match the probe (`scripts/probes/sticky_cold_vs_warm.py`) verbatim so the

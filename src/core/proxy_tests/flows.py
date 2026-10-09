@@ -20,7 +20,6 @@ this keeps flow orthogonal to what "success" means in a given test.
 from __future__ import annotations
 
 import random
-from typing import Optional
 
 FLOW_DIRECT = "direct"
 FLOW_HOME = "home"

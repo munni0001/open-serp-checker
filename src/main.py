@@ -125,12 +125,14 @@ class ProxyPatch(BaseModel):
 async def projects_page(request: Request):
     projects = db.get_all_projects()
     counts = db.count_keywords_by_project()
+    proxy_count = len(db.get_all_proxies())
     return templates.TemplateResponse(
         request=request,
         name="projects.html",
         context={
             "projects": projects,
             "keyword_counts": counts,
+            "proxy_count": proxy_count,
         },
     )
 
@@ -876,6 +878,11 @@ async def keyword_history(keyword_id: int):
     }
 
 
-if __name__ == "__main__":
+def main() -> None:
+    """Console-script entrypoint — `open-serp-checker` after `pip install -e .`."""
     import uvicorn
     uvicorn.run(app, host=settings.host, port=settings.port)
+
+
+if __name__ == "__main__":
+    main()

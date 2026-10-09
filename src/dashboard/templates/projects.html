@@ -1,7 +1,41 @@
 {% extends "_base.html" %}
-{% block title %}Projects · serp-scrape{% endblock %}
+{% block title %}Projects · open-serp-checker{% endblock %}
 
 {% block body %}
+{% if proxy_count == 0 %}
+<div class="card" id="zeroProxyBanner" style="border-left: 3px solid var(--accent); margin-bottom: 20px;">
+    <div class="card-body" style="display: flex; align-items: center; gap: 14px; flex-wrap: wrap;">
+        <i data-lucide="alert-triangle" style="width: 18px; height: 18px; color: var(--accent); flex-shrink: 0;"></i>
+        <div style="flex: 1; min-width: 240px;">
+            <div style="font-weight: 500; font-size: 14px; margin-bottom: 2px;">Running direct — expect captchas within ~50 requests.</div>
+            <div style="font-size: 13px; color: var(--text-dim);">
+                For Google scraping, you need a residential or datacenter proxy. Recommended:
+                <a href="https://brightdata.com/?ref=open-serp-checker" target="_blank" rel="noopener nofollow sponsored" style="color: var(--accent);">Bright Data</a> ·
+                <a href="https://oxylabs.io/?ref=open-serp-checker" target="_blank" rel="noopener nofollow sponsored" style="color: var(--accent);">Oxylabs</a> ·
+                <a href="https://decodo.com/?ref=open-serp-checker" target="_blank" rel="noopener nofollow sponsored" style="color: var(--accent);">Decodo</a> ·
+                <a href="https://www.webshare.io/?ref=open-serp-checker" target="_blank" rel="noopener nofollow sponsored" style="color: var(--accent);">Webshare</a>
+            </div>
+        </div>
+        <a href="/proxies" class="btn btn-primary btn-sm"><i data-lucide="plus"></i> Add proxy</a>
+        <button class="btn btn-ghost btn-sm" id="dismissZeroProxy" type="button">Dismiss</button>
+    </div>
+</div>
+<script>
+    (function() {
+        const banner = document.getElementById('zeroProxyBanner');
+        if (!banner) return;
+        if (localStorage.getItem('dismissZeroProxyBanner') === '1') {
+            banner.style.display = 'none';
+            return;
+        }
+        document.getElementById('dismissZeroProxy').addEventListener('click', () => {
+            localStorage.setItem('dismissZeroProxyBanner', '1');
+            banner.style.display = 'none';
+        });
+    })();
+</script>
+{% endif %}
+
 <div class="page-head">
     <div>
         <h1 class="page-title">Projects</h1>

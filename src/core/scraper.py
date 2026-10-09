@@ -3,11 +3,10 @@ from datetime import datetime
 from typing import Optional
 from urllib.parse import quote
 
-import httpx
 
 from src.config import settings
 from src.core.database import Database
-from src.core.engines import bing, google
+from src.core.engines import bing, dataforseo, google, searxng, serper
 from src.core.engines.google_identity import PoolBurned
 from src.models import Keyword, KeywordResult, Project
 
@@ -158,6 +157,32 @@ class SerpScraper:
                     html, project.domain or "", keyword.max_position,
                     final_url=final_url, status_code=200,
                 )
+            elif keyword.engine == "searxng":
+                match = await searxng.search(
+                    keyword.term, project.domain or "",
+                    geo=keyword.geo, max_position=keyword.max_position,
+                    proxy=proxy_url, timeout=self.timeout,
+                )
+                match.setdefault("status", "ok")
+                match.setdefault("error", None)
+            elif keyword.engine == "dataforseo":
+                # API providers run through DataForSEO's own browser/proxy stack —
+                # ignore our proxy_url and the blocklist/exit-IP machinery.
+                match = await dataforseo.search(
+                    keyword.term, project.domain or "",
+                    geo=keyword.geo, max_position=keyword.max_position,
+                    timeout=self.timeout,
+                )
+                match.setdefault("status", "ok")
+                match.setdefault("error", None)
+            elif keyword.engine == "serper":
+                match = await serper.search(
+                    keyword.term, project.domain or "",
+                    geo=keyword.geo, max_position=keyword.max_position,
+                    timeout=self.timeout,
+                )
+                match.setdefault("status", "ok")
+                match.setdefault("error", None)
             else:
                 raise ValueError(f"Unknown engine: {keyword.engine!r}")
         except PoolBurned as e:
