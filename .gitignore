@@ -50,6 +50,7 @@ tests/**/*.py[cod]
 # Exception: user-facing OSS docs that ship with the repo
 !/README.md
 !/LICENSE
+!/CHANGELOG.md
 !/CONTRIBUTING.md
 !/docs/
 !/docs/**
