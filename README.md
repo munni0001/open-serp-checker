@@ -44,19 +44,6 @@ Requires Python ≥ 3.11. For Google scraping, the Camoufox browser is fetched o
 
 Full comparison and setup: [docs/engines.md](docs/engines.md).
 
-## Proxies
-
-Google scraping needs a rotating residential or datacenter proxy. Benchmark results from Session 3.9 (20 queries per provider, same day):
-
-| Provider | Type | Pass | ~$/1k SERPs |
-|---|---|---|---|
-| [Webshare](https://www.webshare.io/?ref=open-serp-checker) | datacenter | 20/20 | ~$0 (flat rate) |
-| [DataImpulse](https://dataimpulse.com/?ref=open-serp-checker) | residential | 20/20 | ~$0.15–0.30 |
-| [Byteful](https://byteful.com/?ref=open-serp-checker) | residential | 20/20 | ~$0.45 |
-| Decodo, Oxylabs, Bright Data | residential | ✅ in prior sessions | ~$0.70–2.25 |
-
-Full comparison: [docs/proxy-providers.md](docs/proxy-providers.md). Affiliate links disclosed.
-
 ## Scope
 
 - Personal / small-team rank tracking, ~10–50 keywords
