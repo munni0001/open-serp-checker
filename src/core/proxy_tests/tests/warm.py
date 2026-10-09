@@ -40,7 +40,7 @@ from src.core.proxy_tests.store import (
     get_run,
 )
 
-DEFAULT_DB = "serp_scraper.db"
+DEFAULT_DB = "open_serp_checker.db"
 IPIFY_URL = "https://api.ipify.org?format=json"
 
 # Match `scripts/probes/vary_warmth.py` verbatim so the validation gate is trivial.

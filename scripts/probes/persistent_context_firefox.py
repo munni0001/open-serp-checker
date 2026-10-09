@@ -63,7 +63,7 @@ USER_AGENT = (
     "Gecko/20100101 Firefox/122.0"
 )
 
-DB_PATH = Path(__file__).parent.parent.parent / "serp_scraper.db"
+DB_PATH = Path(__file__).parent.parent.parent / "open_serp_checker.db"
 
 
 def load_decodo(port: int) -> Optional[dict]:

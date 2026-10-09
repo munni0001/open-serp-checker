@@ -26,7 +26,7 @@ LOG_DIR = Path(__file__).parent / "logs"
 LOG_DIR.mkdir(exist_ok=True)
 LOG_FILE = LOG_DIR / "matrix_doconly_5kw.jsonl"
 
-DB = Path(__file__).parent.parent.parent / "serp_scraper.db"
+DB = Path(__file__).parent.parent.parent / "open_serp_checker.db"
 
 
 def find_provider(name: str) -> int | None:

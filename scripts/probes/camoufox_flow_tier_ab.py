@@ -18,7 +18,7 @@ LOG_DIR = Path(__file__).parent / "logs"
 LOG_DIR.mkdir(exist_ok=True)
 LOG_FILE = LOG_DIR / "camoufox_flow_tier_ab.jsonl"
 
-DB = Path(__file__).parent.parent.parent / "serp_scraper.db"
+DB = Path(__file__).parent.parent.parent / "open_serp_checker.db"
 
 
 def load_run(run_id: int) -> dict:

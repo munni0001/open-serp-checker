@@ -12,7 +12,7 @@ from pathlib import Path
 
 from playwright.async_api import async_playwright
 
-DB = Path(__file__).parent.parent.parent / "serp_scraper.db"
+DB = Path(__file__).parent.parent.parent / "open_serp_checker.db"
 
 
 async def try_launch_proxy():

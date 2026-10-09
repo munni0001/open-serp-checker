@@ -53,7 +53,7 @@ QUERIES = [
     "best serp api",
 ]
 
-DB_PATH = Path(__file__).parent.parent.parent / "serp_scraper.db"
+DB_PATH = Path(__file__).parent.parent.parent / "open_serp_checker.db"
 
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
       "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")

@@ -38,7 +38,7 @@ from src.core.proxy_tests.store import (
     get_run,
 )
 
-DEFAULT_DB = "serp_scraper.db"
+DEFAULT_DB = "open_serp_checker.db"
 IPIFY_URL = "https://api.ipify.org?format=json"
 
 # First 5 from pass_rate.KEYWORDS so numbers are directly comparable.

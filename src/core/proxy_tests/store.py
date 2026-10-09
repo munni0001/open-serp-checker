@@ -10,7 +10,7 @@ import sqlite3
 from datetime import datetime
 from typing import Any
 
-DEFAULT_DB = "serp_scraper.db"
+DEFAULT_DB = "open_serp_checker.db"
 
 _QUERY_COLS = (
     "keyword", "exit_ip", "exit_country", "sticky_ip_held", "http_status",

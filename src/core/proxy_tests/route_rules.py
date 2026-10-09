@@ -106,7 +106,7 @@ def make_route_handler(tier: str, doconly_allow: Optional[list[str]] = None):
         return fat_handler
 
     if tier == TIER_DEFAULT:
-        # Historical serp-scrape rule. Kept verbatim so runs pre- and
+        # Historical open-serp-checker rule. Kept verbatim so runs pre- and
         # post-4.10 with this tier are directly comparable.
         async def default_handler(route):
             if route.request.resource_type in _DEFAULT_BLOCKED_TYPES:

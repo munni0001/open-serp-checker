@@ -6,7 +6,7 @@ from src.models import Keyword, KeywordResult, Project, Proxy
 
 
 class Database:
-    def __init__(self, db_path: str = "serp_scraper.db"):
+    def __init__(self, db_path: str = "open_serp_checker.db"):
         self.db_path = db_path
         self.init_db()
 

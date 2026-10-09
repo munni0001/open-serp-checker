@@ -36,7 +36,7 @@ import sqlite3
 import sys
 from pathlib import Path
 
-DB = Path(__file__).parent.parent.parent / "serp_scraper.db"
+DB = Path(__file__).parent.parent.parent / "open_serp_checker.db"
 
 KEYWORDS = [
     "foxy ai promo code",

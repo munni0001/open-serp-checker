@@ -37,7 +37,7 @@ from src.core.proxy_tests.store import (
     get_run,
 )
 
-DEFAULT_DB = "serp_scraper.db"
+DEFAULT_DB = "open_serp_checker.db"
 TARGET_URL = "https://www.google.com/"
 IPIFY_URL = "https://api.ipify.org?format=json"
 TIMEOUT_S = 45

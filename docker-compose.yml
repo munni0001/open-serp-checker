@@ -1,0 +1,11 @@
+services:
+  open-serp-checker:
+    build: .
+    image: ghcr.io/munni0001/open-serp-checker:latest
+    ports:
+      - "127.0.0.1:8000:8000"   # localhost-only — do NOT bind 0.0.0.0 publicly
+    volumes:
+      - ./data:/data            # SQLite DB persists across restarts
+    env_file:
+      - .env
+    restart: unless-stopped

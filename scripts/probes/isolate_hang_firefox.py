@@ -20,7 +20,7 @@ from pathlib import Path
 
 from playwright.async_api import async_playwright
 
-DB = Path(__file__).parent.parent.parent / "serp_scraper.db"
+DB = Path(__file__).parent.parent.parent / "open_serp_checker.db"
 
 # Firefox 122 desktop UA — matches a stock Firefox ClientHello shape.
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:122.0) "

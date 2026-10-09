@@ -75,7 +75,7 @@ STEALTH_ARGS = [
     "--no-first-run",
 ]
 
-DB_PATH = Path(__file__).parent.parent.parent / "serp_scraper.db"
+DB_PATH = Path(__file__).parent.parent.parent / "open_serp_checker.db"
 
 
 def load_decodo_rotating() -> Optional[dict]:

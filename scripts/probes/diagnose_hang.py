@@ -23,7 +23,7 @@ Object.defineProperty(navigator, 'plugins', { get: () => [1,2,3,4,5] });
 Object.defineProperty(navigator, 'languages', { get: () => ['en-US','en'] });
 """
 
-DB = Path(__file__).parent.parent.parent / "serp_scraper.db"
+DB = Path(__file__).parent.parent.parent / "open_serp_checker.db"
 
 
 async def main() -> int:

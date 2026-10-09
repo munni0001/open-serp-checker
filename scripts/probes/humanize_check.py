@@ -44,7 +44,7 @@ from typing import Optional
 
 from playwright.async_api import async_playwright
 
-DB_PATH = Path(__file__).parent.parent.parent / "serp_scraper.db"
+DB_PATH = Path(__file__).parent.parent.parent / "open_serp_checker.db"
 
 KEYWORDS = [
     "foxy ai promo code",

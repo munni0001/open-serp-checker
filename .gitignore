@@ -46,3 +46,12 @@ verify_*.py
 # ...but keep Python caches out of tests/ too
 tests/**/__pycache__/
 tests/**/*.py[cod]
+
+# Exception: user-facing OSS docs that ship with the repo
+!/README.md
+!/LICENSE
+!/CONTRIBUTING.md
+!/docs/
+!/docs/**
+!/.github/
+!/.github/**

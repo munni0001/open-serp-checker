@@ -19,7 +19,7 @@ import sqlite3
 from typing import Any
 from urllib.parse import quote
 
-DEFAULT_DB = "serp_scraper.db"
+DEFAULT_DB = "open_serp_checker.db"
 
 # provider -> gateway metadata. Hardcoded for MVP; expand as new providers land.
 # Country-aware formats are used when a country code is supplied to

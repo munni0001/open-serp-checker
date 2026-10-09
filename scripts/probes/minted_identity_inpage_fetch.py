@@ -53,7 +53,7 @@ KEYWORDS = [
     "paymore discount code",
 ]
 
-DB_PATH = Path(__file__).parent.parent.parent / "serp_scraper.db"
+DB_PATH = Path(__file__).parent.parent.parent / "open_serp_checker.db"
 SEARCH_URL = "https://www.google.com/search"
 HOME_URL = "https://www.google.com/"
 
